@@ -1,0 +1,77 @@
+# TryingOpen2API — 发行版管线（tag v* 触发 + workflow_dispatch）
+#
+# 触发方式：
+#   - push tag v*（如 v0.1.0）：自动构建 + 创建 GitHub Release
+#   - workflow_dispatch：手动选 tag 后构建（不自动建 Release）
+#
+# 与 CI（ci.yml）分工：CI 负责 main push / PR 的质量门槛与每日产物；
+# 本管线只在正式打 tag 时产出发行版二进制 + SHA256 + Release Notes。
+# tag 冲突协调：主控负责统一分配 tag，本工作流不抢 tag、不覆盖已有 Release。
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: release (windows x86_64-msvc)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build release (x86_64-pc-windows-msvc)
+        run: cargo build --release --target x86_64-pc-windows-msvc --bin tryingopen2api
+
+      - name: Generate .sha256
+        run: |
+          $bin = "target/x86_64-pc-windows-msvc/release/tryingopen2api.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $bin).Hash.ToLower()
+          Set-Content -Path "$bin.sha256" -Value "$hash  $([System.IO.Path]::GetFileName($bin))" -Encoding ascii
+          Get-Content "$bin.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tryingopen2api-x86_64-pc-windows-msvc
+          path: |
+            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe
+            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub Release (tag push only)
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: TryingOpen2API ${{ github.ref_name }}
+          body: |
+            TryingOpen2API ${{ github.ref_name }}（Rust axum 免费模型 OpenAI/Anthropic 兼容网关）
+
+            变更要点见 CHANGELOG.md。CI 已验证：fmt / clippy / test / audit / gitleaks。
+            校验：`sha256 -l tryingopen2api.exe`（或 `Get-FileHash`）。
+          files: |
+            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe
+            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe.sha256
