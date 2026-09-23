@@ -52,18 +52,33 @@ pub fn build_router(state: AppState) -> Router {
 
 // ---------- 认证 ----------
 
-fn check_api_key(cfg: &Config, api_keys: &std::sync::RwLock<Vec<String>>, headers: &HeaderMap) -> Result<(), ApiError> {
+fn check_api_key(
+    cfg: &Config,
+    api_keys: &std::sync::RwLock<Vec<String>>,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
     let keys = api_keys.read().map(|g| g.clone()).unwrap_or_default();
     if keys.is_empty() && cfg.api_keys.is_empty() {
         return Ok(());
     }
-    let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     let bearer = auth.strip_prefix("Bearer ").unwrap_or("").trim();
-    let x_key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or("").trim();
-    if keys.iter().any(|k| k == bearer || k == x_key) || cfg.api_keys.iter().any(|k| k == bearer || k == x_key) {
+    let x_key = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    if keys.iter().any(|k| k == bearer || k == x_key)
+        || cfg.api_keys.iter().any(|k| k == bearer || k == x_key)
+    {
         return Ok(());
     }
-    Err(ApiError::unauthorized("无效的 API Key。请在面板生成 Key 或配置 config.json 的 api_keys"))
+    Err(ApiError::unauthorized(
+        "无效的 API Key。请在面板生成 Key 或配置 config.json 的 api_keys",
+    ))
 }
 
 // ---------- 面板 ----------
@@ -75,8 +90,10 @@ async fn handle_dashboard() -> Html<String> {
 async fn handle_healthz(State(state): State<AppState>) -> Json<serde_json::Value> {
     let model_count = state.registry.all().await.len();
     let proxy_count = state.pool.len().await;
-    Json(json!({ "ok": true, "app": "tryingopen2api", "version": env!("CARGO_PKG_VERSION"),
-        "upstream": state.cfg.upstream_base_url, "models": model_count, "proxies": proxy_count }))
+    Json(
+        json!({ "ok": true, "app": "tryingopen2api", "version": env!("CARGO_PKG_VERSION"),
+        "upstream": state.cfg.upstream_base_url, "models": model_count, "proxies": proxy_count }),
+    )
 }
 
 // ---------- /v1/models ----------
@@ -147,8 +164,14 @@ fn extract_image_parts(messages: &[ChatMessage]) -> Vec<MessagePart> {
             for part in arr {
                 if let Some(t) = part.get("type").and_then(|v| v.as_str()) {
                     if t == "image_url" {
-                        let url = part.get("image_url").and_then(|v| v.as_str())
-                            .or_else(|| part.get("image_url").and_then(|v| v.get("url")).and_then(|v| v.as_str()))
+                        let url = part
+                            .get("image_url")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| {
+                                part.get("image_url")
+                                    .and_then(|v| v.get("url"))
+                                    .and_then(|v| v.as_str())
+                            })
                             .unwrap_or("");
                         if !url.is_empty() {
                             out.push(MessagePart {
@@ -170,7 +193,9 @@ fn media_type(url: &str) -> String {
     if let Some(rest) = url.strip_prefix("data:") {
         let header = rest.split(',').next().unwrap_or("");
         let mime = header.split(';').next().unwrap_or("").to_string();
-        if !mime.is_empty() { return mime; }
+        if !mime.is_empty() {
+            return mime;
+        }
     }
     let path = url.split('?').next().unwrap_or(url);
     let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
@@ -195,14 +220,23 @@ fn build_upstream_request(
     for m in messages {
         if m.role == "system" {
             let t = message_text(&m.content);
-            if !t.is_empty() { system_texts.push(t); }
+            if !t.is_empty() {
+                system_texts.push(t);
+            }
         }
     }
     for m in messages {
         let role = m.role.as_str();
-        if role == "system" { continue; }
+        if role == "system" {
+            continue;
+        }
         let text = message_text(&m.content);
-        let mut parts: Vec<MessagePart> = vec![MessagePart { part_type: "text".into(), text: Some(text), media_type: None, url: None }];
+        let mut parts: Vec<MessagePart> = vec![MessagePart {
+            part_type: "text".into(),
+            text: Some(text),
+            media_type: None,
+            url: None,
+        }];
         if role == "user" {
             for img in &images {
                 parts.push(img.clone());
@@ -217,23 +251,47 @@ fn build_upstream_request(
     }
     // 系统提示 → 拼进第一条 user 的 [SYSTEM INSTRUCTIONS]（上游无 system 角色）
     if !system_texts.is_empty() {
-        let sys = format!("[SYSTEM INSTRUCTIONS]\n{}\n[/SYSTEM INSTRUCTIONS]", system_texts.join("\n\n"));
+        let sys = format!(
+            "[SYSTEM INSTRUCTIONS]\n{}\n[/SYSTEM INSTRUCTIONS]",
+            system_texts.join("\n\n")
+        );
         if let Some(first_user) = converted.iter_mut().find(|m| m.role == "user") {
-            first_user.parts.insert(0, MessagePart { part_type: "text".into(), text: Some(sys), media_type: None, url: None });
+            first_user.parts.insert(
+                0,
+                MessagePart {
+                    part_type: "text".into(),
+                    text: Some(sys),
+                    media_type: None,
+                    url: None,
+                },
+            );
         } else {
-            converted.insert(0, UpstreamMessage {
-                id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
-                role: "user".into(),
-                parts: vec![MessagePart { part_type: "text".into(), text: Some(sys), media_type: None, url: None }],
-                metadata: None,
-            });
+            converted.insert(
+                0,
+                UpstreamMessage {
+                    id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
+                    role: "user".into(),
+                    parts: vec![MessagePart {
+                        part_type: "text".into(),
+                        text: Some(sys),
+                        media_type: None,
+                        url: None,
+                    }],
+                    metadata: None,
+                },
+            );
         }
     }
     if converted.is_empty() {
         converted.push(UpstreamMessage {
             id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
             role: "user".into(),
-            parts: vec![MessagePart { part_type: "text".into(), text: Some("".into()), media_type: None, url: None }],
+            parts: vec![MessagePart {
+                part_type: "text".into(),
+                text: Some("".into()),
+                media_type: None,
+                url: None,
+            }],
             metadata: None,
         });
     }
@@ -263,7 +321,10 @@ async fn handle_chat_completions(
     let images = extract_image_parts(&body.messages);
     let req = build_upstream_request(&model, &body.messages, images, "balanced");
 
-    let thread_key = body.user.clone().unwrap_or_else(|| "default-thread".to_string());
+    let thread_key = body
+        .user
+        .clone()
+        .unwrap_or_else(|| "default-thread".to_string());
     state.sessions.ensure(&thread_key, &model).await;
 
     match try_rounds(&state, &req).await {
@@ -272,14 +333,15 @@ async fn handle_chat_completions(
             if body.stream {
                 let s = openai_events(up, &model, created);
                 let body = axum::body::Body::from_stream(s);
-                return SseResponse { body }.into_response();
+                SseResponse { body }.into_response()
             } else {
                 let text = collect_nonstream_text(up).await;
-                let body = crate::protocol::openai_sse_helper::openai_nonstream(&text, &model, created);
-                return Response::builder()
+                let body =
+                    crate::protocol::openai_sse_helper::openai_nonstream(&text, &model, created);
+                Response::builder()
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from(text_body(&body)))
-                    .unwrap();
+                    .unwrap()
             }
         }
         Err(e) => api_err_response(e),
@@ -294,15 +356,17 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
     let mut last_err: Option<String> = None;
 
     for attempt in 0..max {
-        let proxy = match state.pool.acquire(Some("residential"), hourly, &cooldown).await {
+        let proxy = match state
+            .pool
+            .acquire(Some("residential"), hourly, &cooldown)
+            .await
+        {
             Some(u) => Some(u),
             None => state.pool.acquire(Some("free"), hourly, &cooldown).await,
         };
         let proxy_str = proxy.clone();
-        match {
-            let client = &state.client;
-            client.stream(req, proxy.as_deref()).await
-        } {
+        let client = &state.client;
+        match client.stream(req, proxy.as_deref()).await {
             Ok(resp) => {
                 if let Some(u) = &proxy_str {
                     state.pool.mark_success(u).await;
@@ -329,9 +393,15 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
     }
     let detail = last_err.unwrap_or_else(|| "全部出口失败".into());
     if detail.starts_with("upstream-429") {
-        Err(ApiError::rate_limited(format!("TryingOpen 全部出口限流中（每 IP 每小时约 {} 次）：{}", state.cfg.hourly_per_ip, detail)))
+        Err(ApiError::rate_limited(format!(
+            "TryingOpen 全部出口限流中（每 IP 每小时约 {} 次）：{}",
+            state.cfg.hourly_per_ip, detail
+        )))
     } else {
-        Err(ApiError::upstream(format!("TryingOpen 上游调用失败（已轮换 {} 个出口 + 直连兜底）: {}", max, detail)))
+        Err(ApiError::upstream(format!(
+            "TryingOpen 上游调用失败（已轮换 {} 个出口 + 直连兜底）: {}",
+            max, detail
+        )))
     }
 }
 
@@ -344,13 +414,17 @@ async fn collect_nonstream_text(up: reqwest::Response) -> String {
     loop {
         line.clear();
         use tokio::io::AsyncBufReadExt;
-        if reader.read_line(&mut line).await.unwrap_or(0) == 0 { break; }
+        if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+            break;
+        }
         let t = line.trim();
         if let Some(data) = t.strip_prefix("data: ") {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                 match v.get("type").and_then(|x| x.as_str()).unwrap_or("") {
                     "text-delta" => {
-                        if let Some(d) = v.get("delta").and_then(|d| d.as_str()) { out.push_str(d); }
+                        if let Some(d) = v.get("delta").and_then(|d| d.as_str()) {
+                            out.push_str(d);
+                        }
                     }
                     "error" => break,
                     "finish" => break,
@@ -362,7 +436,9 @@ async fn collect_nonstream_text(up: reqwest::Response) -> String {
     out
 }
 
-fn text_body(s: &str) -> String { s.to_string() }
+fn text_body(s: &str) -> String {
+    s.to_string()
+}
 
 // ---------- Anthropic /v1/messages ----------
 
@@ -396,7 +472,9 @@ fn anthropic_text(content: &serde_json::Value) -> String {
         serde_json::Value::Array(arr) => {
             let mut out = String::new();
             for part in arr {
-                if let Some(t) = part.get("text").and_then(|v| v.as_str()) { out.push_str(t); }
+                if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+                    out.push_str(t);
+                }
             }
             out
         }
@@ -412,7 +490,10 @@ fn anthropic_image_parts(messages: &[AnthropicMessage]) -> Vec<MessagePart> {
                 if part.get("type").and_then(|v| v.as_str()) == Some("image") {
                     if let Some(src) = part.get("source") {
                         if let Some(data) = src.get("data").and_then(|v| v.as_str()) {
-                            let mt = src.get("media_type").and_then(|v| v.as_str()).unwrap_or("image/png");
+                            let mt = src
+                                .get("media_type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("image/png");
                             out.push(MessagePart {
                                 part_type: "file".into(),
                                 text: None,
@@ -439,12 +520,16 @@ async fn handle_claude_messages(
     let model = state.registry.resolve(&body.model).await;
 
     let last_user = body.messages.iter().rev().find(|m| m.role == "user");
-    let content = last_user.map(|m| anthropic_text(&m.content)).unwrap_or_default();
+    let content = last_user
+        .map(|m| anthropic_text(&m.content))
+        .unwrap_or_default();
     if content.trim().is_empty() && anthropic_image_parts(&body.messages).is_empty() {
         return api_err_response_anthropic(ApiError::bad_request("消息内容为空"));
     }
 
-    let thread_key = body.metadata.as_ref()
+    let thread_key = body
+        .metadata
+        .as_ref()
         .and_then(|m| m.get("thread_id").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
         .unwrap_or_else(|| "default-thread".to_string());
@@ -455,15 +540,24 @@ async fn handle_claude_messages(
     let mut system_texts: Vec<String> = Vec::new();
     if let Some(sys) = &body.system {
         let t = anthropic_text(sys);
-        if !t.is_empty() { system_texts.push(t); }
+        if !t.is_empty() {
+            system_texts.push(t);
+        }
     }
     for m in &body.messages {
         if m.role == "system" {
             let t = anthropic_text(&m.content);
-            if !t.is_empty() { system_texts.push(t); }
+            if !t.is_empty() {
+                system_texts.push(t);
+            }
             continue;
         }
-        let mut parts = vec![MessagePart { part_type: "text".into(), text: Some(anthropic_text(&m.content)), media_type: None, url: None }];
+        let mut parts = vec![MessagePart {
+            part_type: "text".into(),
+            text: Some(anthropic_text(&m.content)),
+            media_type: None,
+            url: None,
+        }];
         if m.role == "user" {
             for img in anthropic_image_parts(&body.messages) {
                 parts.push(img.clone());
@@ -478,11 +572,18 @@ async fn handle_claude_messages(
     }
     if !system_texts.is_empty() {
         if let Some(first_user) = up_msgs.iter_mut().find(|m| m.role == "user") {
-            first_user.parts.insert(0, MessagePart {
-                part_type: "text".into(),
-                text: Some(format!("[SYSTEM INSTRUCTIONS]\n{}\n[/SYSTEM INSTRUCTIONS]", system_texts.join("\n\n"))),
-                media_type: None, url: None,
-            });
+            first_user.parts.insert(
+                0,
+                MessagePart {
+                    part_type: "text".into(),
+                    text: Some(format!(
+                        "[SYSTEM INSTRUCTIONS]\n{}\n[/SYSTEM INSTRUCTIONS]",
+                        system_texts.join("\n\n")
+                    )),
+                    media_type: None,
+                    url: None,
+                },
+            );
         }
     }
     let req = StreamRequest {
@@ -501,7 +602,10 @@ async fn handle_claude_messages(
             state.sessions.touch(&thread_key).await;
             if body.stream {
                 let s = crate::protocol::anthropic_sse::anthropic_events(up, &model, &thread_key);
-                return AnthropicSseResponse { body: axum::body::Body::from_stream(s) }.into_response();
+                return AnthropicSseResponse {
+                    body: axum::body::Body::from_stream(s),
+                }
+                .into_response();
             }
             let text = collect_nonstream_text(up).await;
             let resp = json!({
@@ -511,7 +615,7 @@ async fn handle_claude_messages(
                 "stop_reason": "end_turn", "stop_sequence": null,
                 "usage": { "input_tokens": 0, "output_tokens": 0 }
             });
-            return Json(resp).into_response();
+            Json(resp).into_response()
         }
         Err(e) => api_err_response_anthropic(e),
     }
@@ -532,7 +636,9 @@ async fn handle_refresh_free(State(state): State<AppState>, headers: HeaderMap) 
         return api_err_response(e);
     }
     if !state.cfg.free_proxy_enabled {
-        return api_err_response(ApiError::bad_request("免费代理未开启（config free_proxy_enabled:true 或 FREE_PROXY_ENABLED=1）"));
+        return api_err_response(ApiError::bad_request(
+            "免费代理未开启（config free_proxy_enabled:true 或 FREE_PROXY_ENABLED=1）",
+        ));
     }
     let n = crate::free_proxy::refresh_once(&state.pool).await;
     Json(json!({ "ok": true, "injected": n, "total": state.pool.len().await })).into_response()
@@ -575,7 +681,10 @@ pub struct ApiKeyAction {
     pub key: Option<String>,
 }
 
-async fn handle_config_api_key(State(state): State<AppState>, Json(body): Json<ApiKeyAction>) -> Response {
+async fn handle_config_api_key(
+    State(state): State<AppState>,
+    Json(body): Json<ApiKeyAction>,
+) -> Response {
     let Ok(mut keys) = state.api_keys.write() else {
         return api_err_response(ApiError::internal("锁错误"));
     };
@@ -590,7 +699,9 @@ async fn handle_config_api_key(State(state): State<AppState>, Json(body): Json<A
             if k.is_empty() {
                 return api_err_response(ApiError::bad_request("缺少 key"));
             }
-            if !keys.contains(&k) { keys.push(k.clone()); }
+            if !keys.contains(&k) {
+                keys.push(k.clone());
+            }
             Json(json!({ "ok": true, "key": k })).into_response()
         }
         "clear" => {
@@ -612,4 +723,3 @@ fn api_err_response_anthropic(e: ApiError) -> Response {
     let status = e.status();
     (status, e.anthropic_json()).into_response()
 }
-

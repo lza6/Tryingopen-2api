@@ -32,7 +32,9 @@ pub fn anthropic_events(
     _model: &str,
     _session_id: &str,
 ) -> impl Stream<Item = Result<String, ApiError>> {
-    let reader = BufReader::new(crate::protocol::stream::reader_with_bytes(upstream.bytes_stream()));
+    let reader = BufReader::new(crate::protocol::stream::reader_with_bytes(
+        upstream.bytes_stream(),
+    ));
     AnthropicTransform {
         reader: Box::pin(reader),
         finished: false,
@@ -64,8 +66,14 @@ impl Stream for AnthropicTransform {
                     return Poll::Ready(Some(Ok(self.stop_events())));
                 }
                 Poll::Ready(Ok(_)) => {
-                    let line = line.trim_end_matches('\n').trim_end_matches('\r').trim().to_string();
-                    if line.is_empty() { continue; }
+                    let line = line
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .trim()
+                        .to_string();
+                    if line.is_empty() {
+                        continue;
+                    }
                     if let Some(ev_name) = line.strip_prefix("event: ") {
                         self.pending_event = ev_name.trim().to_string();
                         continue;
@@ -75,11 +83,18 @@ impl Stream for AnthropicTransform {
                             Ok(v) => v,
                             Err(_) => continue,
                         };
-                        let event = json.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let event = json
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         match event.as_str() {
                             "reasoning-delta" => {
-                                let delta = json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                                if delta.is_empty() { continue; }
+                                let delta =
+                                    json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                                if delta.is_empty() {
+                                    continue;
+                                }
                                 let frame = format!(
                                     "event: content_block_start\ndata: {}\n\nevent: content_block_delta\ndata: {}\n\n",
                                     serde_json::json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
@@ -88,8 +103,11 @@ impl Stream for AnthropicTransform {
                                 return Poll::Ready(Some(Ok(frame)));
                             }
                             "text-delta" => {
-                                let delta = json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                                if delta.is_empty() { continue; }
+                                let delta =
+                                    json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                                if delta.is_empty() {
+                                    continue;
+                                }
                                 let frame = format!(
                                     "event: content_block_delta\ndata: {}\n\n",
                                     serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":delta}})
@@ -101,7 +119,10 @@ impl Stream for AnthropicTransform {
                                 return Poll::Ready(Some(Ok(self.stop_events())));
                             }
                             "error" => {
-                                let msg = json.get("errorText").and_then(|v| v.as_str()).unwrap_or("上游流错误");
+                                let msg = json
+                                    .get("errorText")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("上游流错误");
                                 let frame = format!(
                                     "event: content_block_delta\ndata: {}\n\n",
                                     serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":format!("\n\n[上游错误: {msg}]")}})

@@ -6,7 +6,11 @@ use tryingopen2api::proxy_pool::{parse_cooldown_map, safe_host_port, ProxyPool};
 #[test]
 fn catalog_has_12_models() {
     let c = catalog();
-    assert!(c.len() >= 12, "static catalog should have >= 12 models, got {}", c.len());
+    assert!(
+        c.len() >= 12,
+        "static catalog should have >= 12 models, got {}",
+        c.len()
+    );
     assert!(c.iter().any(|m| m.id == "qwen/qwen3.8-27b"));
     assert!(c.iter().any(|m| m.id == "moonshotai/kimi-k3"));
 }
@@ -29,7 +33,10 @@ async fn normalize_and_resolve() {
     // 未知 → 原样
     assert_eq!(r.normalize("nope/nope").await, "nope/nope");
     // 解析兜底
-    assert_eq!(r.resolve("nope/nope").await, "deepseek/deepseek-v4-flash-0731");
+    assert_eq!(
+        r.resolve("nope/nope").await,
+        "deepseek/deepseek-v4-flash-0731"
+    );
 }
 
 #[tokio::test]
@@ -38,7 +45,11 @@ async fn proxy_pool_cooldown_and_rotation() {
     assert_eq!(p.len().await, 0);
     assert_eq!(p.acquire(None, 20, &[0, 15]).await, None);
 
-    p.add_free(vec!["http://1.2.3.4:8080".into(), "http://5.6.7.8:8080".into()]).await;
+    p.add_free(vec![
+        "http://1.2.3.4:8080".into(),
+        "http://5.6.7.8:8080".into(),
+    ])
+    .await;
     assert_eq!(p.len().await, 2);
     let u1 = p.acquire(None, 20, &[0, 15]).await.unwrap();
     let u2 = p.acquire(None, 20, &[0, 15]).await.unwrap();
@@ -54,13 +65,18 @@ async fn proxy_pool_cooldown_and_rotation() {
 
 #[test]
 fn cooldown_map_parse() {
-    assert_eq!(parse_cooldown_map("0,15,60,120,300"), vec![0, 15, 60, 120, 300]);
+    assert_eq!(
+        parse_cooldown_map("0,15,60,120,300"),
+        vec![0, 15, 60, 120, 300]
+    );
     assert_eq!(parse_cooldown_map(""), Vec::<u32>::new());
 }
 
 #[test]
 fn host_port_masked() {
-    assert_eq!(safe_host_port("http://user:pass@1.2.3.4:8080"), "1.2.3.4:8080");
+    assert_eq!(
+        safe_host_port("http://user:pass@1.2.3.4:8080"),
+        "1.2.3.4:8080"
+    );
     assert_eq!(safe_host_port("socks5://1.2.3.4:1080"), "1.2.3.4:1080");
 }
-

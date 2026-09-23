@@ -1,5 +1,7 @@
 //! TryingOpen2API 入口：加载配置 → 构建上游客户端/代理池/注册表 → 启动 axum
 
+use std::sync::Arc;
+use std::time::Duration;
 use tryingopen2api::api::{build_router, AppState};
 use tryingopen2api::config::Config;
 use tryingopen2api::free_proxy;
@@ -7,15 +9,14 @@ use tryingopen2api::models::ModelRegistry;
 use tryingopen2api::proxy_pool::ProxyPool;
 use tryingopen2api::session::SessionMap;
 use tryingopen2api::upstream::UpstreamClient;
-use std::sync::Arc;
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,tryingopen2api=debug")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,tryingopen2api=debug")
+            }),
         )
         .with_target(false)
         .init();
@@ -26,7 +27,11 @@ async fn main() -> anyhow::Result<()> {
     let upstream = cfg.upstream_base_url.clone();
     tracing::info!("TryingOpen2API v{} 启动", env!("CARGO_PKG_VERSION"));
     tracing::info!("监听 {}", listen_addr);
-    tracing::info!("上游 {}（完全匿名，单 IP 每小时约 {} 次）", upstream, cfg.hourly_per_ip);
+    tracing::info!(
+        "上游 {}（完全匿名，单 IP 每小时约 {} 次）",
+        upstream,
+        cfg.hourly_per_ip
+    );
 
     let proxy_opt = None::<String>; // 首个客户端直连（健康检查/目录抓取用）
     let client = Arc::new(UpstreamClient::new(
@@ -71,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
             let t = tokio::spawn(async move {
                 free_proxy::run_loop(p, refresh_min, rx).await;
             });
-            let _ = t;
+            drop(t); // 显式 detach 后台任务（run_loop 随进程生命周期运行）
             tracing::info!("免费代理抓取后台已启动（每 {} 分钟刷新）", refresh_min);
         }
     }

@@ -18,7 +18,10 @@ use tokio::sync::RwLock;
 const DAY: u64 = 24 * 3600;
 
 fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,11 +84,19 @@ impl ProxyEntry {
     fn snapshot(&self) -> ProxySnapshot {
         let t = now();
         let host_port = safe_host_port(&self.url);
-        let c = if t < self.cooldown_until { self.cooldown_until - t } else { 0.0 };
+        let c = if t < self.cooldown_until {
+            self.cooldown_until - t
+        } else {
+            0.0
+        };
         ProxySnapshot {
             host_port,
             source: self.source.clone(),
-            daily_uses: if (t / DAY as f64) as i64 == self.day_key { self.daily_uses } else { 0 },
+            daily_uses: if (t / DAY as f64) as i64 == self.day_key {
+                self.daily_uses
+            } else {
+                0
+            },
             cooling: t < self.cooldown_until,
             cooldown_seconds: c as i64,
             fails: self.consecutive_fails,
@@ -97,13 +108,19 @@ impl ProxyEntry {
 /// 脱敏：只暴露 host:port，不泄漏 user:pass
 pub fn safe_host_port(url: &str) -> String {
     let rest = url.split("://").nth(1).unwrap_or(url);
-    let rest = if let Some(at) = rest.rfind('@') { &rest[at + 1..] } else { rest };
+    let rest = if let Some(at) = rest.rfind('@') {
+        &rest[at + 1..]
+    } else {
+        rest
+    };
     rest.to_string()
 }
 
 /// 递增冷却：第 N 次使用后等待 map[N-1] 秒（超出取最后值）
 pub fn cooldown_seconds(count: u32, map: &[u32]) -> u64 {
-    if map.is_empty() { return 30; }
+    if map.is_empty() {
+        return 30;
+    }
     let idx = (count as usize).saturating_sub(1);
     if idx < map.len() {
         map[idx] as u64
@@ -113,7 +130,9 @@ pub fn cooldown_seconds(count: u32, map: &[u32]) -> u64 {
 }
 
 pub fn parse_cooldown_map(s: &str) -> Vec<u32> {
-    s.split(',').filter_map(|p| p.trim().parse::<u32>().ok()).collect()
+    s.split(',')
+        .filter_map(|p| p.trim().parse::<u32>().ok())
+        .collect()
 }
 
 #[derive(Debug, Default)]
@@ -138,12 +157,19 @@ impl ProxyPool {
         match tokio::fs::read_to_string(path).await {
             Ok(text) => {
                 let mut data = self.inner.write().await;
-                let existing: HashSet<String> = data.entries.iter().map(|e| e.url.clone()).collect();
+                let existing: HashSet<String> =
+                    data.entries.iter().map(|e| e.url.clone()).collect();
                 let mut fresh: Vec<String> = Vec::new();
                 for line in text.lines() {
                     let u = line.trim();
-                    if u.is_empty() || u.starts_with('#') { continue; }
-                    let norm: String = if u.contains("://") { u.to_string() } else { format!("http://{u}") };
+                    if u.is_empty() || u.starts_with('#') {
+                        continue;
+                    }
+                    let norm: String = if u.contains("://") {
+                        u.to_string()
+                    } else {
+                        format!("http://{u}")
+                    };
                     if !existing.contains(&norm) && !fresh.contains(&norm) {
                         fresh.push(norm);
                     }
@@ -159,7 +185,9 @@ impl ProxyPool {
     }
     /// 批量注入免费代理（去重）
     pub async fn add_free(&self, urls: Vec<String>) -> usize {
-        if urls.is_empty() { return 0; }
+        if urls.is_empty() {
+            return 0;
+        }
         let mut added = 0;
         let mut data = self.inner.write().await;
         let existing: HashSet<String> = data.entries.iter().map(|e| e.url.clone()).collect();
@@ -191,40 +219,92 @@ impl ProxyPool {
         self.inner.read().await.entries.len()
     }
 
+    pub async fn is_empty(&self) -> bool {
+        self.inner.read().await.entries.is_empty()
+    }
+
     pub async fn count_free(&self) -> usize {
-        self.inner.read().await.entries.iter().filter(|e| e.source == "free").count()
+        self.inner
+            .read()
+            .await
+            .entries
+            .iter()
+            .filter(|e| e.source == "free")
+            .count()
     }
 
     /// 分配一个可用出口代理：
     /// 1) 24h 窗口未用过 → 健康分最高
     /// 2) 全用过 → 健康分降序 + 冷却最早结束
     /// 3) 全在冷却 → 冷却最早结束（权宜）
-    pub async fn acquire(&self, prefer_source: Option<&str>, hourly_per_ip: usize, cooldown_map: &[u32]) -> Option<String> {
+    pub async fn acquire(
+        &self,
+        prefer_source: Option<&str>,
+        hourly_per_ip: usize,
+        cooldown_map: &[u32],
+    ) -> Option<String> {
         let mut data = self.inner.write().await;
-        if data.entries.is_empty() { return None; }
+        if data.entries.is_empty() {
+            return None;
+        }
         let t = now();
         let entries = &mut data.entries;
-        let mut idxs: Vec<usize> = (0..entries.len()).filter(|&i| entries[i].available(t, hourly_per_ip)).collect();
+        let mut idxs: Vec<usize> = (0..entries.len())
+            .filter(|&i| entries[i].available(t, hourly_per_ip))
+            .collect();
         if let Some(pref) = prefer_source {
-            let p: Vec<usize> = idxs.iter().cloned().filter(|&i| entries[i].source == pref).collect();
-            if !p.is_empty() { idxs = p; }
+            let p: Vec<usize> = idxs
+                .iter()
+                .cloned()
+                .filter(|&i| entries[i].source == pref)
+                .collect();
+            if !p.is_empty() {
+                idxs = p;
+            }
         }
         let pick = if !idxs.is_empty() {
-            let unused: Vec<usize> = idxs.iter().cloned().filter(|&i| entries[i].use_count == 0).collect();
+            let unused: Vec<usize> = idxs
+                .iter()
+                .cloned()
+                .filter(|&i| entries[i].use_count == 0)
+                .collect();
             if !unused.is_empty() {
-                unused.into_iter().max_by(|&a, &b| {
-                    entries[a].health_score.partial_cmp(&entries[b].health_score).unwrap_or(std::cmp::Ordering::Equal)
-                }).unwrap()
+                unused
+                    .into_iter()
+                    .max_by(|&a, &b| {
+                        entries[a]
+                            .health_score
+                            .partial_cmp(&entries[b].health_score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap()
             } else {
-                idxs.into_iter().max_by(|&a, &b| {
-                    entries[a].health_score.partial_cmp(&entries[b].health_score).unwrap_or(std::cmp::Ordering::Equal)
-                        .then(entries[b].cooldown_until.partial_cmp(&entries[a].cooldown_until).unwrap_or(std::cmp::Ordering::Equal))
-                }).unwrap()
+                idxs.into_iter()
+                    .max_by(|&a, &b| {
+                        entries[a]
+                            .health_score
+                            .partial_cmp(&entries[b].health_score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then(
+                                entries[b]
+                                    .cooldown_until
+                                    .partial_cmp(&entries[a].cooldown_until)
+                                    .unwrap_or(std::cmp::Ordering::Equal),
+                            )
+                    })
+                    .unwrap()
             }
         } else {
-            entries.iter().enumerate().min_by(|(_, a), (_, b)| {
-                a.cooldown_until.partial_cmp(&b.cooldown_until).unwrap_or(std::cmp::Ordering::Equal)
-            }).map(|(i, _)| i).unwrap_or(0)
+            entries
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| {
+                    a.cooldown_until
+                        .partial_cmp(&b.cooldown_until)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(i, _)| i)
+                .unwrap_or(0)
         };
         let e = &mut entries[pick];
         e.last_used_at = t;
@@ -241,7 +321,7 @@ impl ProxyPool {
         for e in data.entries.iter_mut() {
             if e.url == url {
                 e.consecutive_fails += 1;
-                e.health_score = 0.7 * e.health_score;
+                e.health_score *= 0.7;
                 e.cooldown_until = if rate_limited {
                     t + cooldown_seconds(e.use_count + 1, cooldown_map) as f64
                 } else {
@@ -297,7 +377,8 @@ impl ProxyPool {
             let mut data = self.inner.write().await;
             data.sticky.insert(session_id.to_string(), (u.clone(), t));
             if data.sticky.len() > 1000 {
-                data.sticky.retain(|_, (_, ts)| t - *ts < sticky_window as f64);
+                data.sticky
+                    .retain(|_, (_, ts)| t - *ts < sticky_window as f64);
             }
         }
         url
@@ -308,7 +389,11 @@ impl ProxyPool {
         let data = self.inner.read().await;
         let t = now();
         let mut items: Vec<ProxySnapshot> = data.entries.iter().map(|e| e.snapshot()).collect();
-        items.sort_by(|a, b| b.health_score.partial_cmp(&a.health_score).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| {
+            b.health_score
+                .partial_cmp(&a.health_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         serde_json::json!({
             "total": data.entries.len(),
             "residential": data.entries.iter().filter(|e| e.source == "residential").count(),
@@ -319,8 +404,3 @@ impl ProxyPool {
         })
     }
 }
-
-
-
-
-

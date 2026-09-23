@@ -34,7 +34,9 @@ pub fn openai_events(
     model: &str,
     created: i64,
 ) -> impl Stream<Item = Result<String, ApiError>> {
-    let reader = BufReader::new(crate::protocol::stream::reader_with_bytes(upstream.bytes_stream()));
+    let reader = BufReader::new(crate::protocol::stream::reader_with_bytes(
+        upstream.bytes_stream(),
+    ));
     OpenAiTransform {
         reader: Box::pin(reader),
         model: model.to_string(),
@@ -63,7 +65,11 @@ impl Stream for OpenAiTransform {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.finished && !self.done_sent {
             self.done_sent = true;
-            return Poll::Ready(Some(Ok(openai_done(&self.model, self.created, &self.finish_reason))));
+            return Poll::Ready(Some(Ok(openai_done(
+                &self.model,
+                self.created,
+                &self.finish_reason,
+            ))));
         }
         if self.finished {
             return Poll::Ready(None);
@@ -79,77 +85,126 @@ impl Stream for OpenAiTransform {
                     self.finished = true;
                     self.done_sent = true;
                     if !self.saw_content {
-                        return Poll::Ready(Some(Ok(openai_empty_error(&self.model, self.created))));
+                        return Poll::Ready(Some(Ok(openai_empty_error(
+                            &self.model,
+                            self.created,
+                        ))));
                     }
-                    return Poll::Ready(Some(Ok(openai_done(&self.model, self.created, &self.finish_reason))));
+                    return Poll::Ready(Some(Ok(openai_done(
+                        &self.model,
+                        self.created,
+                        &self.finish_reason,
+                    ))));
                 }
                 Poll::Ready(Ok(_)) => {
-                    let line = line.trim_end_matches('\n').trim_end_matches('\r').trim().to_string();
-                    if line.is_empty() { continue; }
+                    let line = line
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .trim()
+                        .to_string();
+                    if line.is_empty() {
+                        continue;
+                    }
                     if let Some(ev_name) = line.strip_prefix("event: ") {
                         self.pending_event = ev_name.trim().to_string();
                         continue;
                     }
                     if let Some(data) = line.strip_prefix("data: ") {
                         match parse_event(data, &self.pending_event) {
-                            Some(evt) => {
-                                match evt.event.as_str() {
-                                    "reasoning-delta" => {
-                                        let delta = evt.json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                                        if delta.is_empty() { continue; }
-                                        let frame = format!("data: {}\n\n", serde_json::json!({
+                            Some(evt) => match evt.event.as_str() {
+                                "reasoning-delta" => {
+                                    let delta = evt
+                                        .json
+                                        .get("delta")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if delta.is_empty() {
+                                        continue;
+                                    }
+                                    let frame = format!(
+                                        "data: {}\n\n",
+                                        serde_json::json!({
                                             "id": format!("chatcmpl-{}", self.created),
                                             "object": "chat.completion.chunk",
                                             "created": self.created,
                                             "model": self.model,
                                             "choices": [{ "index": 0, "delta": { "role": "assistant", "reasoning_content": delta }, "finish_reason": null }]
-                                        }));
-                                        return Poll::Ready(Some(Ok(frame)));
+                                        })
+                                    );
+                                    return Poll::Ready(Some(Ok(frame)));
+                                }
+                                "text-delta" => {
+                                    let delta = evt
+                                        .json
+                                        .get("delta")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if delta.is_empty() {
+                                        continue;
                                     }
-                                    "text-delta" => {
-                                        let delta = evt.json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                                        if delta.is_empty() { continue; }
-                                        self.saw_content = true;
-                                        let frame = format!("data: {}\n\n", serde_json::json!({
+                                    self.saw_content = true;
+                                    let frame = format!(
+                                        "data: {}\n\n",
+                                        serde_json::json!({
                                             "id": format!("chatcmpl-{}", self.created),
                                             "object": "chat.completion.chunk",
                                             "created": self.created,
                                             "model": self.model,
                                             "choices": [{ "index": 0, "delta": { "content": delta }, "finish_reason": null }]
-                                        }));
-                                        return Poll::Ready(Some(Ok(frame)));
-                                    }
-                                    "finish" => {
-                                        self.finished = true;
-                                        self.finish_reason = evt.json.get("finishReason").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("stop").to_string();
-                                        let err = error_text(&evt.json);
-                                        if self.finish_reason == "error" && !err.is_empty() {
-                                            let frame = format!("data: {}\n\n", serde_json::json!({
+                                        })
+                                    );
+                                    return Poll::Ready(Some(Ok(frame)));
+                                }
+                                "finish" => {
+                                    self.finished = true;
+                                    self.finish_reason = evt
+                                        .json
+                                        .get("finishReason")
+                                        .and_then(|v| v.as_str())
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or("stop")
+                                        .to_string();
+                                    let err = error_text(&evt.json);
+                                    if self.finish_reason == "error" && !err.is_empty() {
+                                        let frame = format!(
+                                            "data: {}\n\n",
+                                            serde_json::json!({
                                                 "id": format!("chatcmpl-{}", self.created),
                                                 "object": "chat.completion.chunk",
                                                 "created": self.created,
                                                 "model": self.model,
                                                 "choices": [{ "index": 0, "delta": { "content": format!("\n\n[上游错误: {}]", err) }, "finish_reason": null }]
-                                            }));
-                                            return Poll::Ready(Some(Ok(frame)));
-                                        }
-                                        return Poll::Ready(Some(Ok(openai_done(&self.model, self.created, &self.finish_reason))));
+                                            })
+                                        );
+                                        return Poll::Ready(Some(Ok(frame)));
                                     }
-                                    "error" => {
-                                        let msg = evt.json.get("errorText").and_then(|v| v.as_str()).unwrap_or("上游流错误");
-                                        self.saw_content = true;
-                                        let frame = format!("data: {}\n\n", serde_json::json!({
+                                    return Poll::Ready(Some(Ok(openai_done(
+                                        &self.model,
+                                        self.created,
+                                        &self.finish_reason,
+                                    ))));
+                                }
+                                "error" => {
+                                    let msg = evt
+                                        .json
+                                        .get("errorText")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("上游流错误");
+                                    self.saw_content = true;
+                                    let frame = format!(
+                                        "data: {}\n\n",
+                                        serde_json::json!({
                                             "id": format!("chatcmpl-{}", self.created),
                                             "object": "chat.completion.chunk",
                                             "created": self.created,
                                             "model": self.model,
                                             "choices": [{ "index": 0, "delta": { "content": format!("\n\n[上游错误: {msg}]") }, "finish_reason": null }]
-                                        }));
-                                        return Poll::Ready(Some(Ok(frame)));
-                                    }
-                                    _ => continue,
+                                        })
+                                    );
+                                    return Poll::Ready(Some(Ok(frame)));
                                 }
-                            }
+                                _ => continue,
+                            },
                             None => continue,
                         }
                     }
@@ -165,16 +220,29 @@ impl Stream for OpenAiTransform {
 }
 
 fn error_text(json: &serde_json::Value) -> String {
-    json.get("errorText").and_then(|v| v.as_str())
-        .or_else(|| json.get("messageMetadata").and_then(|m| m.get("errorText")).and_then(|v| v.as_str()))
-        .or_else(|| json.get("messageMetadata").and_then(|m| m.get("error")).and_then(|v| v.as_str()))
+    json.get("errorText")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            json.get("messageMetadata")
+                .and_then(|m| m.get("errorText"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            json.get("messageMetadata")
+                .and_then(|m| m.get("error"))
+                .and_then(|v| v.as_str())
+        })
         .unwrap_or("")
         .to_string()
 }
 
 fn parse_event(data: &str, _event_name: &str) -> Option<Event> {
     let json: serde_json::Value = serde_json::from_str(data).ok()?;
-    let event = json.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let event = json
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     Some(Event { event, json })
 }
 
@@ -184,22 +252,27 @@ struct Event {
 }
 
 fn openai_done(model: &str, created: i64, finish_reason: &str) -> String {
-    format!("data: {}\n\n", serde_json::json!({
-        "id": format!("chatcmpl-{}", created),
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{ "index": 0, "delta": {}, "finish_reason": finish_reason }]
-    })) + "data: [DONE]\n\n"
+    format!(
+        "data: {}\n\n",
+        serde_json::json!({
+            "id": format!("chatcmpl-{}", created),
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{ "index": 0, "delta": {}, "finish_reason": finish_reason }]
+        })
+    ) + "data: [DONE]\n\n"
 }
 
 fn openai_empty_error(model: &str, created: i64) -> String {
-    format!("data: {}\n\n", serde_json::json!({
-        "id": format!("chatcmpl-{}", created),
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{ "index": 0, "delta": { "content": "\n\n[上游无响应（可能被限流）]" }, "finish_reason": null }]
-    })) + "data: [DONE]\n\n"
+    format!(
+        "data: {}\n\n",
+        serde_json::json!({
+            "id": format!("chatcmpl-{}", created),
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{ "index": 0, "delta": { "content": "\n\n[上游无响应（可能被限流）]" }, "finish_reason": null }]
+        })
+    ) + "data: [DONE]\n\n"
 }
-

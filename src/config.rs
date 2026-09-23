@@ -67,9 +67,15 @@ pub struct Config {
     pub redact_logs: bool,
 }
 
-fn default_listen() -> String { "127.0.0.1:47831".into() }
-fn default_upstream() -> String { "https://www.tryingopen.com".into() }
-fn default_model() -> String { "qwen/qwen3.8-27b".into() }
+fn default_listen() -> String {
+    "127.0.0.1:47831".into()
+}
+fn default_upstream() -> String {
+    "https://www.tryingopen.com".into()
+}
+fn default_model() -> String {
+    "qwen/qwen3.8-27b".into()
+}
 fn default_fallbacks() -> Vec<String> {
     vec![
         "deepseek/deepseek-v4-flash-0731".into(),
@@ -77,16 +83,36 @@ fn default_fallbacks() -> Vec<String> {
         "minimax/minimax-m3".into(),
     ]
 }
-fn default_timeout() -> u64 { 120 }
-fn default_catalog_min() -> u64 { 30 }
-fn default_free_proxy_min() -> u64 { 30 }
-fn default_hourly_per_ip() -> usize { 20 }
-fn default_max_attempts() -> usize { 3 }
-fn default_cooldown_map() -> String { "0,15,60,120,300".into() }
-fn default_true() -> bool { true }
-fn default_sqlite() -> String { "data/tryingopen2api.sqlite".into() }
-fn default_proxies_data() -> String { "data/proxies.txt".into() }
-fn default_telemetry() -> String { "data/telemetry.sqlite".into() }
+fn default_timeout() -> u64 {
+    120
+}
+fn default_catalog_min() -> u64 {
+    30
+}
+fn default_free_proxy_min() -> u64 {
+    30
+}
+fn default_hourly_per_ip() -> usize {
+    20
+}
+fn default_max_attempts() -> usize {
+    3
+}
+fn default_cooldown_map() -> String {
+    "0,15,60,120,300".into()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_sqlite() -> String {
+    "data/tryingopen2api.sqlite".into()
+}
+fn default_proxies_data() -> String {
+    "data/proxies.txt".into()
+}
+fn default_telemetry() -> String {
+    "data/telemetry.sqlite".into()
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -129,21 +155,49 @@ impl Config {
             Config::default()
         };
         // 环境变量覆盖
-        if let Ok(v) = std::env::var("LISTEN_ADDR") { cfg.listen_addr = v; }
-        if let Ok(v) = std::env::var("UPSTREAM_BASE_URL") { cfg.upstream_base_url = v.trim_end_matches('/').to_string(); }
-        if let Ok(v) = std::env::var("API_KEYS") {
-            cfg.api_keys = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if let Ok(v) = std::env::var("LISTEN_ADDR") {
+            cfg.listen_addr = v;
         }
-        if let Ok(v) = std::env::var("DEFAULT_MODEL") { cfg.default_model = v; }
-        if let Ok(v) = std::env::var("REQUEST_TIMEOUT_SEC") { cfg.request_timeout_sec = v.parse().unwrap_or(cfg.request_timeout_sec); }
-        if let Ok(v) = std::env::var("CATALOG_REFRESH_MIN") { cfg.catalog_refresh_min = v.parse().unwrap_or(cfg.catalog_refresh_min); }
-        if let Ok(v) = std::env::var("PROXY_FILE") { cfg.proxy_file = v; }
-        if let Ok(v) = std::env::var("FREE_PROXY_ENABLED") { cfg.free_proxy_enabled = matches!(v.trim().to_lowercase().as_str(), "1" | "true"); }
-        if let Ok(v) = std::env::var("FREE_PROXY_REFRESH_MIN") { cfg.free_proxy_refresh_min = v.parse().unwrap_or(cfg.free_proxy_refresh_min); }
-        if let Ok(v) = std::env::var("HOURLY_PER_IP") { cfg.hourly_per_ip = v.parse().unwrap_or(cfg.hourly_per_ip); }
-        if let Ok(v) = std::env::var("MAX_ATTEMPTS") { cfg.max_attempts = v.parse().unwrap_or(cfg.max_attempts); }
-        if let Ok(v) = std::env::var("COOLDOWN_MAP") { cfg.cooldown_map = v; }
-        if let Ok(v) = std::env::var("DIRECT_FALLBACK") { cfg.direct_fallback = matches!(v.trim().to_lowercase().as_str(), "1" | "true"); }
+        if let Ok(v) = std::env::var("UPSTREAM_BASE_URL") {
+            cfg.upstream_base_url = v.trim_end_matches('/').to_string();
+        }
+        if let Ok(v) = std::env::var("API_KEYS") {
+            cfg.api_keys = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        if let Ok(v) = std::env::var("DEFAULT_MODEL") {
+            cfg.default_model = v;
+        }
+        if let Ok(v) = std::env::var("REQUEST_TIMEOUT_SEC") {
+            cfg.request_timeout_sec = v.parse().unwrap_or(cfg.request_timeout_sec);
+        }
+        if let Ok(v) = std::env::var("CATALOG_REFRESH_MIN") {
+            cfg.catalog_refresh_min = v.parse().unwrap_or(cfg.catalog_refresh_min);
+        }
+        if let Ok(v) = std::env::var("PROXY_FILE") {
+            cfg.proxy_file = v;
+        }
+        if let Ok(v) = std::env::var("FREE_PROXY_ENABLED") {
+            cfg.free_proxy_enabled = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
+        }
+        if let Ok(v) = std::env::var("FREE_PROXY_REFRESH_MIN") {
+            cfg.free_proxy_refresh_min = v.parse().unwrap_or(cfg.free_proxy_refresh_min);
+        }
+        if let Ok(v) = std::env::var("HOURLY_PER_IP") {
+            cfg.hourly_per_ip = v.parse().unwrap_or(cfg.hourly_per_ip);
+        }
+        if let Ok(v) = std::env::var("MAX_ATTEMPTS") {
+            cfg.max_attempts = v.parse().unwrap_or(cfg.max_attempts);
+        }
+        if let Ok(v) = std::env::var("COOLDOWN_MAP") {
+            cfg.cooldown_map = v;
+        }
+        if let Ok(v) = std::env::var("DIRECT_FALLBACK") {
+            cfg.direct_fallback = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
+        }
         Ok(cfg)
     }
 
@@ -152,7 +206,11 @@ impl Config {
             return Some(PathBuf::from(p));
         }
         let p = PathBuf::from("config.json");
-        if p.exists() { Some(p) } else { None }
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
     }
 
     /// 解析递增冷却映射

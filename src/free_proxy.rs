@@ -45,11 +45,17 @@ pub struct FetcherStats {
 /// 只保留合法公网 IP（拒绝内网/回环/链路本地/保留/组播/未指定）
 pub fn is_valid_public_ip(host: &str) -> bool {
     match host.parse::<IpAddr>() {
-        Ok(addr) =>
-            match addr {
-                IpAddr::V4(v4) => !(v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_multicast() || v4.is_unspecified() || v4.is_broadcast()),
-                IpAddr::V6(v6) => !(v6.is_loopback() || v6.is_multicast() || v6.is_unspecified()),
-            },
+        Ok(addr) => match addr {
+            IpAddr::V4(v4) => {
+                !(v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_multicast()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast())
+            }
+            IpAddr::V6(v6) => !(v6.is_loopback() || v6.is_multicast() || v6.is_unspecified()),
+        },
         Err(_) => false,
     }
 }
@@ -58,12 +64,20 @@ pub fn parse_ipport_text(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let line = strip_scheme(line);
-        if line.matches(':').count() != 1 { continue; }
+        if line.matches(':').count() != 1 {
+            continue;
+        }
         let (host, port) = line.rsplit_once(':').unwrap();
-        if host.is_empty() || port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) { continue; }
-        if !is_valid_public_ip(host) { continue; }
+        if host.is_empty() || port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if !is_valid_public_ip(host) {
+            continue;
+        }
         let url = format!("http://{host}:{port}");
         if seen.insert(url.clone()) {
             out.push(url);
@@ -74,7 +88,9 @@ pub fn parse_ipport_text(text: &str) -> Vec<String> {
 
 fn strip_scheme(line: &str) -> &str {
     for p in ["http://", "https://", "socks5://", "socks4://", "socks://"] {
-        if let Some(rest) = line.strip_prefix(p) { return rest; }
+        if let Some(rest) = line.strip_prefix(p) {
+            return rest;
+        }
     }
     line
 }
@@ -91,8 +107,12 @@ pub fn parse_geonode_json(text: &str) -> Vec<String> {
     for item in data {
         let ip = item.get("ip").and_then(|x| x.as_str()).unwrap_or("");
         let port = item.get("port").and_then(|x| x.as_str()).unwrap_or("");
-        if ip.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) { continue; }
-        if !is_valid_public_ip(ip) { continue; }
+        if ip.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if !is_valid_public_ip(ip) {
+            continue;
+        }
         out.push(format!("http://{ip}:{port}"));
     }
     out
@@ -111,18 +131,28 @@ async fn precheck(url: &str) -> bool {
     let rest = url.split("://").nth(1).unwrap_or(url);
     let (host, port) = rest.rsplit_once(':').unwrap_or((rest, "80"));
     let port: u16 = port.parse().unwrap_or(80);
-    match tokio::time::timeout(std::time::Duration::from_secs(PRECHECK_TIMEOUT), tokio::net::TcpStream::connect((host, port))).await {
-        Ok(Ok(_)) => true,
-        _ => false,
-    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(PRECHECK_TIMEOUT),
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
 }
 
 /// 异步后台循环：抓取 → 解析 → TCP 预检 → 注入 → 周期刷新 + 剔除
-pub async fn run_loop(pool: std::sync::Arc<ProxyPool>, refresh_min: u64, stop: tokio::sync::watch::Receiver<bool>) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_min.max(1) * 60));
+pub async fn run_loop(
+    pool: std::sync::Arc<ProxyPool>,
+    refresh_min: u64,
+    stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut interval =
+        tokio::time::interval(std::time::Duration::from_secs(refresh_min.max(1) * 60));
     interval.tick().await; // 第一次立即 tick
     let has_stop = *stop.borrow();
-    if has_stop { return; }
+    if has_stop {
+        return;
+    }
     let _ = refresh_once(pool.as_ref()).await;
     let mut recv = stop;
     loop {
@@ -170,8 +200,15 @@ pub async fn refresh_once(pool: &ProxyPool) -> usize {
     stats.sources_ok = ok;
     stats.fetched = fetched_all.len() as u32;
     stats.injected = injected as u32;
-    stats.last_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    tracing::debug!("免费代理一轮: 源OK={ok} 解析={} 注入={}", stats.fetched, stats.injected);
+    stats.last_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    tracing::debug!(
+        "免费代理一轮: 源OK={ok} 解析={} 注入={}",
+        stats.fetched,
+        stats.injected
+    );
     stats.injected as usize
 }
 
@@ -182,14 +219,12 @@ async fn fetch_text(url: &str) -> Option<String> {
         .build()
         .ok()?;
     let resp = client.get(url).send().await.ok()?;
-    if !resp.status().is_success() { return None; }
+    if !resp.status().is_success() {
+        return None;
+    }
     resp.text().await.ok()
 }
 
 async fn pool_stats(_pool: &ProxyPool) -> FetcherStats {
     FetcherStats::default()
 }
-
-
-
-

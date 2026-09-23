@@ -19,7 +19,9 @@ pub struct SessionMap {
 }
 
 impl SessionMap {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub async fn get(&self, key: &str) -> Option<SessionBinding> {
         self.inner.read().await.get(key).cloned()
@@ -31,6 +33,10 @@ impl SessionMap {
 
     pub async fn len(&self) -> usize {
         self.inner.read().await.len()
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.inner.read().await.is_empty()
     }
 
     /// 绑定（或复用）下游 key → 模型
@@ -45,7 +51,10 @@ impl SessionMap {
             created_at: chrono::Utc::now().to_rfc3339(),
             last_active: chrono::Utc::now().to_rfc3339(),
         };
-        self.inner.write().await.insert(key.to_string(), binding.clone());
+        self.inner
+            .write()
+            .await
+            .insert(key.to_string(), binding.clone());
         binding
     }
 

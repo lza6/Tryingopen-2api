@@ -14,12 +14,24 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    pub fn bad_request(msg: impl Into<String>) -> Self { Self::BadRequest(msg.into()) }
-    pub fn unauthorized(msg: impl Into<String>) -> Self { Self::Unauthorized(msg.into()) }
-    pub fn upstream(msg: impl Into<String>) -> Self { Self::Upstream(msg.into()) }
-    pub fn not_found(msg: impl Into<String>) -> Self { Self::NotFound(msg.into()) }
-    pub fn rate_limited(msg: impl Into<String>) -> Self { Self::RateLimited(msg.into()) }
-    pub fn internal(msg: impl Into<String>) -> Self { Self::Internal(msg.into()) }
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self::BadRequest(msg.into())
+    }
+    pub fn unauthorized(msg: impl Into<String>) -> Self {
+        Self::Unauthorized(msg.into())
+    }
+    pub fn upstream(msg: impl Into<String>) -> Self {
+        Self::Upstream(msg.into())
+    }
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
+    }
+    pub fn rate_limited(msg: impl Into<String>) -> Self {
+        Self::RateLimited(msg.into())
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::Internal(msg.into())
+    }
 
     pub fn status(&self) -> StatusCode {
         match self {
@@ -34,8 +46,12 @@ impl ApiError {
 
     pub fn message(&self) -> &str {
         match self {
-            Self::BadRequest(m) | Self::Unauthorized(m) | Self::Upstream(m)
-            | Self::NotFound(m) | Self::RateLimited(m) | Self::Internal(m) => m,
+            Self::BadRequest(m)
+            | Self::Unauthorized(m)
+            | Self::Upstream(m)
+            | Self::NotFound(m)
+            | Self::RateLimited(m)
+            | Self::Internal(m) => m,
         }
     }
 

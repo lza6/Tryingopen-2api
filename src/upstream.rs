@@ -77,12 +77,25 @@ impl UpstreamClient {
 
     pub async fn check_health(&self) -> Result<()> {
         let url = format!("{}/", self.base_url);
-        let resp = self.http.get(&url).send().await.context("上游健康检查失败")?;
-        if resp.status().is_success() { Ok(()) } else { Err(anyhow!("上游健康检查 HTTP {}", resp.status())) }
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .context("上游健康检查失败")?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(anyhow!("上游健康检查 HTTP {}", resp.status()))
+        }
     }
 
     /// 对话流：返回 SSE 响应体（由上层逐行转换）。proxy=None 表示直连。
-    pub async fn stream(&self, req: &StreamRequest, proxy: Option<&str>) -> Result<reqwest::Response> {
+    pub async fn stream(
+        &self,
+        req: &StreamRequest,
+        proxy: Option<&str>,
+    ) -> Result<reqwest::Response> {
         let url = format!("{}/api/open", self.base_url);
         let mut client = &self.http;
         let owned = if proxy.is_some() {
@@ -92,12 +105,22 @@ impl UpstreamClient {
                 .user_agent(DESKTOP_UA)
                 .default_headers(default_headers(&self.base_url));
             let b = if let Some(p) = proxy {
-                match reqwest::Proxy::all(p) { Ok(pr) => b.proxy(pr), Err(_) => b }
-            } else { b };
+                match reqwest::Proxy::all(p) {
+                    Ok(pr) => b.proxy(pr),
+                    Err(_) => b,
+                }
+            } else {
+                b
+            };
             Some(b.build()?)
-        } else { None };
-        if let Some(c) = &owned { client = c; }
-        let resp = client.post(&url)
+        } else {
+            None
+        };
+        if let Some(c) = &owned {
+            client = c;
+        }
+        let resp = client
+            .post(&url)
             .json(req)
             .send()
             .await
@@ -109,14 +132,22 @@ impl UpstreamClient {
         }
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("上游对话流失败 HTTP {status}: {}", truncate(&text, 400)));
+            return Err(anyhow!(
+                "上游对话流失败 HTTP {status}: {}",
+                truncate(&text, 400)
+            ));
         }
         Ok(resp)
     }
 
     /// 抓取首页 + 模型目录 chunk，返回全部模型记录（供 ModelRegistry 替换）
     pub async fn fetch_catalog(&self) -> Result<Vec<crate::models::ModelMeta>> {
-        let home = self.http.get(format!("{}/", self.base_url)).send().await.context("拉取首页失败")?;
+        let home = self
+            .http
+            .get(format!("{}/", self.base_url))
+            .send()
+            .await
+            .context("拉取首页失败")?;
         if !home.status().is_success() {
             return Err(anyhow!("首页 HTTP {}", home.status()));
         }
@@ -126,7 +157,9 @@ impl UpstreamClient {
         let mut paths = Vec::new();
         for cap in chunk_re.find_iter(&html) {
             let p = cap.as_str().to_string();
-            if !paths.contains(&p) { paths.push(p); }
+            if !paths.contains(&p) {
+                paths.push(p);
+            }
         }
         if paths.is_empty() {
             return Err(anyhow!("首页未发现 chunk 路径"));
@@ -135,9 +168,13 @@ impl UpstreamClient {
         for p in paths {
             let url = format!("{}{}", self.base_url, p);
             let resp = self.http.get(&url).send().await?;
-            if !resp.status().is_success() { continue; }
+            if !resp.status().is_success() {
+                continue;
+            }
             let text = resp.text().await.unwrap_or_default();
-            if !text.contains("supportsTools") { continue; }
+            if !text.contains("supportsTools") {
+                continue;
+            }
             let parsed = parse_catalog_chunk(&text);
             if !parsed.is_empty() {
                 all.extend(parsed);
@@ -155,22 +192,28 @@ impl UpstreamClient {
 
 /// 用与 providers/tryingopen 相同的正则从 JS chunk 提取模型目录
 pub fn parse_catalog_chunk(chunk: &str) -> Vec<crate::models::ModelMeta> {
-    let re = regex::Regex::new(r#"(?s)\{id:"([a-z0-9][a-z0-9.\-]*/[a-z0-9][a-z0-9.\-]*)",name:"([^"]+)".*?\}"#).unwrap();
+    let re_price = regex::Regex::new(r#"pricePerMTok:([0-9.]+)"#).unwrap();
+    let re = regex::Regex::new(
+        r#"(?s)\{id:"([a-z0-9][a-z0-9.\-]*/[a-z0-9][a-z0-9.\-]*)",name:"([^"]+)".*?\}"#,
+    )
+    .unwrap();
     let mut out = Vec::new();
     for cap in re.captures_iter(chunk) {
         let id = cap[1].to_string();
         let name = cap[2].to_string();
         // 用平衡括号切出这条记录
-        let Some(seg) = balanced_segment(chunk, cap.get(0).unwrap().start()) else { continue };
+        let Some(seg) = balanced_segment(chunk, cap.get(0).unwrap().start()) else {
+            continue;
+        };
         let field = |k: &str| -> Option<String> {
             let r = regex::Regex::new(&format!(r#""{}":"([^"]*)""#, regex::escape(k))).ok()?;
             Some(r.captures(seg)?.get(1)?.as_str().to_string())
         };
         let flag = |k: &str| seg.contains(&format!("{k}:!0")) || seg.contains(&format!("{k}:true"));
-        let price = {
-            let r = regex::Regex::new(r#"pricePerMTok:([0-9.]+)"#).unwrap();
-            r.captures(seg).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
-        };
+        let price = re_price
+            .captures(seg)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string());
         let ctx = field("context").unwrap_or_else(|| "128k".into());
         let price_f = price.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
         out.push(crate::models::ModelMeta {
@@ -197,9 +240,13 @@ fn balanced_segment(text: &str, start: usize) -> Option<&str> {
     let mut end = start;
     for (i, &b) in bytes.iter().enumerate().skip(start) {
         if in_str {
-            if esc { esc = false; }
-            else if b == b'\\' { esc = true; }
-            else if b == b'"' { in_str = false; }
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
             continue;
         }
         match b {
@@ -207,27 +254,44 @@ fn balanced_segment(text: &str, start: usize) -> Option<&str> {
             b'{' => depth += 1,
             b'}' => {
                 depth -= 1;
-                if depth == 0 { end = i; break; }
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
             }
             _ => {}
         }
     }
-    if end > start { Some(&text[start..=end]) } else { None }
+    if end > start {
+        Some(&text[start..=end])
+    } else {
+        None
+    }
 }
 
 fn default_headers(base_url: &str) -> reqwest::header::HeaderMap {
     use reqwest::header::{HeaderValue, ACCEPT, CONTENT_TYPE};
     let mut h = reqwest::header::HeaderMap::new();
-    h.insert("accept-language", HeaderValue::from_static("zh-CN,zh;q=0.9"));
+    h.insert(
+        "accept-language",
+        HeaderValue::from_static("zh-CN,zh;q=0.9"),
+    );
     h.insert(ACCEPT, HeaderValue::from_static("*/*"));
     h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     // 浏览器语义：origin/referer 必须是站点本身
-    if let Ok(v) = HeaderValue::from_str(base_url) { h.insert("origin", v); }
-    if let Ok(v) = HeaderValue::from_str(&format!("{base_url}/")) { h.insert("referer", v); }
+    if let Ok(v) = HeaderValue::from_str(base_url) {
+        h.insert("origin", v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&format!("{base_url}/")) {
+        h.insert("referer", v);
+    }
     h
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}...", &s[..n]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n])
+    }
 }
-
