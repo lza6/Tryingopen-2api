@@ -1,0 +1,22 @@
+{
+  "listen_addr": "127.0.0.1:47831",
+  "upstream_base_url": "https://www.tryingopen.com",
+  "api_keys": [],
+  "default_model": "qwen/qwen3.8-27b",
+  "fallback_models": [
+    "deepseek/deepseek-v4-flash-0731",
+    "z-ai/glm-5.2",
+    "minimax/minimax-m3"
+  ],
+  "request_timeout_sec": 120,
+  "catalog_refresh_min": 30,
+  "proxy_file": "data/proxies.txt",
+  "free_proxy_enabled": false,
+  "free_proxy_refresh_min": 30,
+  "hourly_per_ip": 20,
+  "max_attempts": 3,
+  "cooldown_map": "0,15,60,120,300",
+  "direct_fallback": true,
+  "skip_upstream_check": true,
+  "redact_logs": true
+}

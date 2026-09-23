@@ -1,0 +1,10 @@
+target/
+data/*.sqlite*
+data/proxies.txt
+reference/live_cookie.txt
+reference/*.txt
+源代码、网络数据包/
+!源代码、网络数据包/www.tryingopen.com.har
+!源代码、网络数据包/*.js
+!源代码、网络数据包/*.css
+graft/.cache/
