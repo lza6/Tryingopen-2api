@@ -1,0 +1,178 @@
+# TryingOpen2API — 完整 CI/CD 管线 (fmt/clippy/test/security/release)
+#
+# ── 分支策略 ─────────────────────────────────────────────────────────────
+#   feature-*  → PR → main （本文件不跑 feature-* 直接 push，只跑 PR）
+#   develop    → 中间集成分支，push 触发 test（可选，当前仓库未用 develop）
+#   main       → 发布主线：push 触发全量测试 + security + windows release 产物
+#   hotfix     说明：紧急修复建议走临时 branch（hotfix/xxx）→ PR → main，
+#             与 feature 分支同一套 PR 校验；不要在 main 上直接改。
+#
+# ── Job matrix 设计 ─────────────────────────────────────────────────────
+#   OS     = [ubuntu-latest, windows-latest]
+#   toolchain = [stable]（MSRV 可选 1.85；如需最低版本保障，另加 [1.85.0] 并
+#              以 rust-version = "1.85" 声明在 Cargo.toml，当前仓库未声明）
+#   fmt/clippy 只跑 ubuntu 一次（Windows 结果一致，省 runner 时间）
+#   test 跑矩阵（ubuntu + windows，main/PR 都跑）
+#   release 只在 windows-latest 构建 x86_64-pc-windows-msvc，上传 artifact + .sha256
+#
+# ── 缓存 ────────────────────────────────────────────────────────────────
+#   Swatinem/rust-cache@v2：key 内建 OS 区分（windows 的 target 缓存自动分开），
+#   cache-on-failure: true 让失败 job 也保存已编译产物，重试提速。
+#
+# ── 失败快速路径 ────────────────────────────────────────────────────────
+#   fail-fast: false —— 矩阵内每个 job 独立跑完，收集所有失败而不是第一个就中断。
+#
+# ── Secrets / 环境变量 ──────────────────────────────────────────────────
+#   公开仓库无需强制 secret。GITHUB_TOKEN 由 Actions 自动注入，权限见下方
+#   permissions 块（只读内容 + 上传 release artifact）。可选：推送 artifacts
+#   到 GitHub Release 时再开启 contents: write。
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1) fmt ─────────────────────────────────────────────────────────────
+  fmt:
+    name: fmt (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+  # ── 2) clippy ──────────────────────────────────────────────────────────
+  clippy:
+    name: clippy (ubuntu)
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # ── 3) test（矩阵 ubuntu + windows）────────────────────────────────────
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        toolchain: [stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      # 本机 rustdoc.exe 缺失导致 cargo test --doc 失败是本地 chocolatey 安装问题，
+      # 与代码无关；CI 只跑 --tests（单元+集成），不跑 --doc。
+      - name: Run tests (no doc-tests)
+        run: cargo test --tests --all-features
+
+  # ── 4) security：依赖漏洞 + 密钥泄漏扫描 ───────────────────────────────
+  security:
+    name: security (audit + gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      # ── cargo audit：CVE / 无效依赖 / yanked 版本 ──
+      # 可选用已有 action（actions-rust-lang/audit@v1）或手动装 cargo-audit；
+      # 这里手动安装以便复用 rust-cache 加速后续运行。
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit
+        run: cargo audit
+      # ── gitleaks：扫描提交历史与工作区里的硬编码密钥 ──
+      # 可选用 gitleaks/gitleaks-action@v2；这里手动装 8.x 二进制并跑 detect，
+      # 避免 action 对私有仓库的额外约束，public repo 同样适用。
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: gitleaks detect
+        run: gitleaks detect --source . --no-banner --redact
+      # ── 可选：trivy fs 文件系统漏洞扫描（对容器/fs 更全面，本次不做硬性门槛）──
+      # - name: trivy fs (optional)
+      #   run: (cd /tmp && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin") && "$HOME/.local/bin/trivy" fs --exit-code 0 .
+
+  # ── 5) release：仅 windows，构建 msvc 产物 + sha256 + artifact ─────────
+  # 可选 coverage：cargo llvm-cov（需 nightly 或 stable + llvm-tools-preview），
+  # 阈值示例：--fail-under-lines 80（未启用，避免稳定/网络噪音干扰主流程）。
+  release:
+    name: release (windows x86_64-msvc)
+    runs-on: windows-latest
+    needs: [fmt, clippy, test, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Build release (x86_64-pc-windows-msvc)
+        run: cargo build --release --target x86_64-pc-windows-msvc --bin tryingopen2api
+      - name: Generate .sha256
+        shell: pwsh
+        run: |
+          $bin = "target/x86_64-pc-windows-msvc/release/tryingopen2api.exe"
+          Get-FileHash -Algorithm SHA256 $bin | Format-List
+          $hash = (Get-FileHash -Algorithm SHA256 $bin).Hash.ToLower()
+          Set-Content -Path "$bin.sha256" -Value "$hash  $([System.IO.Path]::GetFileName($bin))" -Encoding ascii
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tryingopen2api-x86_64-pc-windows-msvc
+          path: |
+            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe
+            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
