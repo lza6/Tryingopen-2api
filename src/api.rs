@@ -85,8 +85,40 @@ fn check_api_key(
 
 // ---------- 面板 ----------
 
-async fn handle_dashboard() -> Html<String> {
-    Html(crate::web::INDEX_HTML.to_string())
+/// Web 面板（/ 与 /ui）：配置 ui_password 后需 Basic Auth
+async fn handle_dashboard(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let pass = state.cfg.ui_password.clone();
+    if !pass.is_empty() {
+        let auth = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let ok = if let Some(b64) = auth.strip_prefix("Basic ") {
+            use base64::{engine::general_purpose::STANDARD, Engine as _};
+            STANDARD
+                .decode(b64.trim())
+                .ok()
+                .and_then(|d| String::from_utf8(d).ok())
+                .map(|s| {
+                    // 用户名任意，密码匹配 ui_password
+                    s.split_once(':').map(|(_, p)| p == pass).unwrap_or(false)
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if !ok {
+            return Response::builder()
+                .status(axum::http::StatusCode::UNAUTHORIZED)
+                .header(
+                    "www-authenticate",
+                    "Basic realm=\"TryingOpen2API\", charset=\"UTF-8\"",
+                )
+                .body(axum::body::Body::from("unauthorized"))
+                .unwrap();
+        }
+    }
+    Html(crate::web::INDEX_HTML.to_string()).into_response()
 }
 
 async fn handle_healthz(State(state): State<AppState>) -> Json<serde_json::Value> {

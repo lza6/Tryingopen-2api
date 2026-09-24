@@ -21,7 +21,13 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    let config_path = Config::resolve_config_path();
+    // 支持 --config <path> CLI 参数；否则按 CONFIG_PATH 环境变量 / 默认 config.json
+    let config_path = std::env::args()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|w| w[0] == "--config")
+        .map(|w| std::path::PathBuf::from(w[1].clone()))
+        .or_else(Config::resolve_config_path);
     let cfg = Config::load(config_path.as_deref())?;
     let listen_addr = cfg.listen_addr.clone();
     let upstream = cfg.upstream_base_url.clone();

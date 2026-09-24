@@ -71,8 +71,10 @@ pub struct Config {
     /// 日志脱敏
     #[serde(default = "default_true")]
     pub redact_logs: bool,
+    /// Web 面板访问密码（空=不鉴权；设置后 / 和 /ui 需 Basic Auth）
+    #[serde(default)]
+    pub ui_password: String,
 }
-
 fn default_listen() -> String {
     "127.0.0.1:47831".into()
 }
@@ -149,6 +151,7 @@ impl Default for Config {
             proxies_path: default_proxies_data(),
             telemetry_path: default_telemetry(),
             skip_upstream_check: default_true(),
+            ui_password: String::new(),
             redact_logs: default_true(),
         }
     }
@@ -217,6 +220,9 @@ impl Config {
         }
         if let Ok(v) = std::env::var("DIRECT_FALLBACK") {
             cfg.direct_fallback = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
+            if let Ok(v) = std::env::var("UI_PASSWORD") {
+                cfg.ui_password = v;
+            }
         }
         Ok(cfg)
     }
