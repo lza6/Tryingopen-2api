@@ -10,13 +10,15 @@
 | 公网 IP | 20.204.27.154 |
 | SSH | root@20.204.27.154（用户提供密码） |
 | 架构 | Ubuntu 22.04 ARM64 (aarch64)，2核 952MB |
-| 服务端口 | 47831（内网）；公网经 Cloudflare Quick Tunnel |
+| 服务端口 | 47831（公网已放行，直连可用）；另有 Cloudflare Quick Tunnel 兜底 |
 | 服务方式 | systemd（tryingopen2api.service，restart=always） |
 | 二进制 | /opt/tryingopen2api/bin/tryingopen2api（7.5MB） |
 | 配置 | /opt/tryingopen2api/config.json |
 | 数据 | /opt/tryingopen2api/data/ |
 | 上游 | https://www.tryingopen.com（匿名） |
 | 代理池 | 免费 44 源 + 住宅文件 data/proxies.txt，默认开启 |
+| 生产保护 | per-key 限流 60/3600s、上游熔断 5 次/30s、/metrics Prometheus |
+
 
 ## 鉴权（生产已启用）
 
@@ -28,7 +30,7 @@
   - 无密码 → 401
 - **healthz**：无鉴权（健康探活用）
 
-## 接入地址（NSG 放行后）
+## 接入地址（公网直连，已放行 47831）
 
 - API Base URL：`http://20.204.27.154:47831/v1`
 - OpenAI 端点：`POST /v1/chat/completions`
@@ -36,8 +38,12 @@
 - 模型列表：`GET /v1/models`
 - Web UI：`http://20.204.27.154:47831/ui`（密码 qg9ozarmn1ikh5）
 - healthz：`http://20.204.27.154:47831/healthz`
+- metrics：`http://20.204.27.154:47831/metrics`（Prometheus）
 
-## Azure NSG 放行步骤（必做，否则公网 503）
+## Azure NSG 放行状态（已确认放行 22 + 47831）
+
+> 2026-09-25 公网直连实测：`curl --noproxy "*" http://20.204.27.154:47831/healthz` 返回 200。
+> 注意：本机若设置了 HTTP_PROXY/HTTPS_PROXY（如 v2rayN 10808），curl 默认走代理可能得到 503，需 `--noproxy "*"`。
 
 Azure 门户 → 虚拟机 NewAPI02 → 网络 → 网络接口 NSG → 入站规则 → 添加：
 - 源：任意 / IP 范围
@@ -75,7 +81,8 @@ curl http://127.0.0.1:47831/healthz    # 本机探活
 - [x] /v1/models 无 key 401、带 key 200
 - [x] 真实对话 E2E（服务器→上游）200，含 reasoning+usage
 - [x] SSH 隧道全链路 E2E 200（healthz + chat）
-- [ ] 公网直连 47831（**待 NSG 放行**）
+- [x] 公网直连 47831 200（`curl --noproxy "*" http://20.204.27.154:47831/healthz`）
+- [ ] 公网 /metrics / 限流 / 熔断复测（本轮补）
 
 ## 安全注意
 - 配置含 key/密码：勿提交 git、勿外泄

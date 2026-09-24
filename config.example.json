@@ -19,6 +19,15 @@
   "direct_fallback": true,
   "skip_upstream_check": true,
   "redact_logs": true,
-  "ui_password": ""  // Web 面板 Basic Auth 密码（空=不鉴权；生产公网务必设置）
+  "ui_password": "",            // Web 面板 Basic Auth 密码（空=不鉴权；生产公网务必设置）
+
+  // ── 生产保护（默认全开，可环境变量覆盖）──
+  "rate_limit_enabled": true,   // 每 API Key 限流（RATE_LIMIT_ENABLED）
+  "rate_limit_requests": 60,    // 窗口内最大请求数（RATE_LIMIT_REQUESTS）
+  "rate_limit_window_sec": 3600,// 限流窗口长度秒（RATE_LIMIT_WINDOW_SEC）
+  "circuit_breaker_enabled": true, // 上游整体熔断（CB_ENABLED）
+  "cb_failure_threshold": 5,    // 连续失败 N 次后 OPEN（CB_FAILURE_THRESHOLD）
+  "cb_timeout_sec": 30,         // OPEN 后多久进入 HALF_OPEN 探测（CB_TIMEOUT_SEC）
+  "metrics_enabled": true       // /metrics Prometheus 端点（METRICS_ENABLED）
 }
 

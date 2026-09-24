@@ -19,6 +19,31 @@
 
 ---
 
+## 生产保护（限流 / 熔断 / 可观测性）
+
+### 每 API Key 限流（P1）
+- 默认开启：每 key 每 3600 秒窗口最多 60 次（`rate_limit_requests` / `rate_limit_window_sec`）
+- 超限 → `429` + `Retry-After`（秒），body 为 OpenAI 形状 `rate_limit_error`
+- 只对**已认证 key** 计数；`/healthz` 不限流；无 key 已 401 不占额度
+- 配置：`rate_limit_enabled` / `RATE_LIMIT_ENABLED` 等环境变量（见 config.example.json）
+
+### 上游熔断（P2）
+- 默认开启：上游整体连续失败 `cb_failure_threshold`(5) 次 → OPEN，后续请求直接 `503`（不再打上游）
+- OPEN 后 `cb_timeout_sec`(30) 进入 HALF_OPEN 放行一个探测请求：成功→CLOSED 恢复，失败→重新 OPEN
+- `429`（配额耗尽）不计入熔断失败——由代理池轮换处理，不触发熔断
+
+### /metrics 可观测性（P3）
+- 默认开启：`GET /metrics`（无需鉴权，Prometheus 文本格式 `text/plain; version=0.0.4`）
+- 指标：
+  - `tryingopen_requests_total{endpoint,provider,status}` 请求计数（2xx/4xx/429/5xx）
+  - `tryingopen_request_duration_seconds_sum/count` 请求耗时
+  - `tryingopen_upstream_errors_total{type}` 上游错误分类（timeout/rate_limited/network/other）
+  - `tryingopen_proxy_pool_size` / `tryingopen_proxy_pool_available` 代理池水位
+  - `tryingopen_active_sessions` 活跃会话数
+- 关闭：`metrics_enabled:false` / `METRICS_ENABLED=0`
+
+---
+
 ## 端点契约
 
 ### POST /v1/chat/completions（OpenAI）

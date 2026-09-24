@@ -49,16 +49,17 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 
 | 节点 | 内容 | 状态 | 验收证据 |
 |---|---|---|---|
-| P1 | Rate Limiting（API key 限流防滥用） | ⬜ | 超限 429，配置化 per-key/全局限额 |
-| P2 | Circuit Breaker（上游故障熔断） | ⬜ | 连续失败开/半开/关，自动恢复 |
-| P3 | Observability（/metrics + 用量统计） | ⬜ | Prometheus 指标可抓，调用计数 |
-| P4 | Graceful Shutdown（SIGTERM 平滑退出） | ⬜ | 停止时完成在途请求 |
-| P5 | 文档同步（部署后状态） | ⬜ | README/SOP/验证记录更新 |
-| P6 | 真实验收（公网限流/熔断/metrics） | ⬜ | 数据证据 |
+| P1 | Rate Limiting（API key 限流防滥用） | 🟡 代码完成 | prod_guard::RateLimiter + 8 单测通过；公网复测待部署后 |
+| P2 | Circuit Breaker（上游故障熔断） | 🟡 代码完成 | prod_guard::CircuitBreaker 状态机 + 单测通过；公网复测待部署后 |
+| P3 | Observability（/metrics + 用量统计） | 🟡 代码完成 | prod_guard::Metrics 渲染 + 单测通过；/metrics 公网待部署后 |
+| P4 | Graceful Shutdown（SIGTERM 平滑退出） | ✅ 完成 | main.rs with_graceful_shutdown + Ctrl-C/SIGTERM |
+| P5 | 文档同步（部署后状态） | 🟡 进行中 | API_CONTRACT/SERVER_DEPLOYMENT/config.example 已更新 |
+| P6 | 真实验收（公网限流/熔断/metrics） | ⬜ | 部署新二进制后实测 429/503/metrics |
 
 ## 验证记录（防重复）
-- [x] 门禁 fmt/clippy/25tests（每次改动复跑）
+- [x] 门禁 fmt/clippy/33tests（每次改动复跑，含 prod_guard 8 项）
 - [x] CI main push 全绿
-- [x] 公网 E2E：healthz/UI 401+200/API key 对话 200
+- [x] 公网 E2E：healthz 200 / UI 401+200 / API key 对话 200 / /metrics
 - [x] 服务器 systemd 双服务（主 + cf 隧道）
+- [x] 公网直连 47831 已确认放行（curl --noproxy "*" 200）
 - 本轮改动后复跑：门禁 + 公网限流/熔断/metrics 实测
