@@ -49,12 +49,12 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 
 | 节点 | 内容 | 状态 | 验收证据 |
 |---|---|---|---|
-| P1 | Rate Limiting（API key 限流防滥用） | 🟡 代码完成 | prod_guard::RateLimiter + 8 单测通过；公网复测待部署后 |
-| P2 | Circuit Breaker（上游故障熔断） | 🟡 代码完成 | prod_guard::CircuitBreaker 状态机 + 单测通过；公网复测待部署后 |
-| P3 | Observability（/metrics + 用量统计） | 🟡 代码完成 | prod_guard::Metrics 渲染 + 单测通过；/metrics 公网待部署后 |
-| P4 | Graceful Shutdown（SIGTERM 平滑退出） | ✅ 完成 | main.rs with_graceful_shutdown + Ctrl-C/SIGTERM |
-| P5 | 文档同步（部署后状态） | 🟡 进行中 | API_CONTRACT/SERVER_DEPLOYMENT/config.example 已更新 |
-| P6 | 真实验收（公网限流/熔断/metrics） | ⬜ | 部署新二进制后实测 429/503/metrics |
+| P1 | Rate Limiting（API key 限流防滥用） | ✅ 完成 | 公网实测阈值3：req1-3=200，req4/5=429 + Retry-After=3591/3590 |
+| P2 | Circuit Breaker（上游故障熔断） | ✅ 完成 | 公网实测坏上游：502→连续503熔断保护→恢复配置后200 |
+| P3 | Observability（/metrics + 用量统计） | ✅ 完成 | 公网 /metrics 含 requests_total 2xx=1、proxy_pool_size=4500、available=4500 |
+| P4 | Graceful Shutdown（SIGTERM 平滑退出） | ✅ 完成 | 服务器日志实测：systemctl restart → received SIGTERM, graceful shutdown |
+| P5 | 文档同步（部署后状态） | ✅ 完成 | API_CONTRACT/SERVER_DEPLOYMENT/config.example/workflow_status 已更新 |
+| P6 | 真实验收（公网限流/熔断/metrics） | ✅ 完成 | 公网直连全链路：healthz/UI/models/chat/Anthropic/429/503/metrics/4500代理 |
 
 ## 验证记录（防重复）
 - [x] 门禁 fmt/clippy/33tests（每次改动复跑，含 prod_guard 8 项）

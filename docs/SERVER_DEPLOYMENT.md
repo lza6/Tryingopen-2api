@@ -72,17 +72,21 @@ cat /opt/tryingopen2api/config.json    # 配置（含 key/密码，勿外泄）
 curl http://127.0.0.1:47831/healthz    # 本机探活
 ```
 
-## 已真实验收（2026-09-25）
+## 已真实验收（2026-09-25 生产保护全链路）
 
-- [x] 服务器编译成功（aarch64 release 7.5MB）
+- [x] 服务器编译成功（aarch64 release 7.5MB，v0.1.3）
 - [x] systemd 服务 active running
-- [x] healthz 200（`{"ok":true,"models":24,"version":"0.1.2"}`）
+- [x] healthz 200（`{"ok":true,"models":24,"version":"0.1.3"}`）
 - [x] /ui 无密码 401、带密码 200
 - [x] /v1/models 无 key 401、带 key 200
-- [x] 真实对话 E2E（服务器→上游）200，含 reasoning+usage
-- [x] SSH 隧道全链路 E2E 200（healthz + chat）
+- [x] 真实对话 E2E（公网直连）200，含 reasoning+usage
+- [x] Anthropic /v1/messages 公网 200（thinking+text+usage）
 - [x] 公网直连 47831 200（`curl --noproxy "*" http://20.204.27.154:47831/healthz`）
-- [ ] 公网 /metrics / 限流 / 熔断复测（本轮补）
+- [x] 限流：阈值3 实测 req1-3=200，req4/5=429 + Retry-After
+- [x] 熔断：坏上游实测 502→503 熔断保护→恢复后 200
+- [x] /metrics 公网：requests_total/upstream_errors/proxy_pool_size/active_sessions
+- [x] 代理池：免费抓取后台修复后 4500 代理全可用，容量 90000/h
+- [x] 优雅停机：journalctl 实测 received SIGTERM, graceful shutdown
 
 ## 安全注意
 - 配置含 key/密码：勿提交 git、勿外泄
