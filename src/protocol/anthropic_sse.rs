@@ -48,6 +48,7 @@ pub fn anthropic_events_reader(
 ) -> impl Stream<Item = Result<String, ApiError>> {
     AnthropicTransform {
         reader,
+        started: false,
         finished: false,
         pending_event: String::new(),
         tool_mode,
@@ -55,11 +56,13 @@ pub fn anthropic_events_reader(
         tool_done: false,
         pending_frames: Vec::new(),
         block_index: 1usize,
+        finish_reason: "stop".to_string(),
     }
 }
 
 struct AnthropicTransform {
     reader: Pin<Box<dyn AsyncBufRead + Send>>,
+    started: bool,
     finished: bool,
     pending_event: String,
     tool_mode: bool,
@@ -67,11 +70,17 @@ struct AnthropicTransform {
     tool_done: bool,
     pending_frames: Vec<String>,
     block_index: usize,
+    finish_reason: String,
 }
 
 impl Stream for AnthropicTransform {
     type Item = Result<String, ApiError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Anthropic 协议要求流以 message_start 开始
+        if !self.started {
+            self.started = true;
+            return Poll::Ready(Some(Ok(self.start_event())));
+        }
         if !self.pending_frames.is_empty() {
             let f = self.pending_frames.remove(0);
             return Poll::Ready(Some(Ok(f)));
@@ -149,7 +158,12 @@ impl Stream for AnthropicTransform {
                                         self.tool_done = true;
                                         self.tool_buf.clear();
                                         let idx = self.block_index;
-                                        self.pending_frames = anthropic_tool_frames(idx, &tc);
+                                        self.pending_frames = Vec::new();
+                                        if !tc.preamble.is_empty() {
+                                            self.pending_frames
+                                                .push(text_delta_frame(&tc.preamble));
+                                        }
+                                        self.pending_frames.extend(anthropic_tool_frames(idx, &tc));
                                         if !tc.rest.is_empty() {
                                             self.pending_frames.push(text_delta_frame(&tc.rest));
                                         }
@@ -163,6 +177,12 @@ impl Stream for AnthropicTransform {
                             }
                             "finish" => {
                                 self.finished = true;
+                                self.finish_reason = json
+                                    .get("finishReason")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or("stop")
+                                    .to_string();
                                 return Poll::Ready(Some(Ok(self.stop_events())));
                             }
                             "error" => {
@@ -191,10 +211,34 @@ impl Stream for AnthropicTransform {
 }
 
 impl AnthropicTransform {
+    fn start_event(&self) -> String {
+        format!(
+            "event: message_start\ndata: {}\n\n",
+            serde_json::json!({
+                "type":"message_start",
+                "message":{
+                    "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
+                    "type":"message",
+                    "role":"assistant",
+                    "model":"",
+                    "content":[],
+                    "stop_reason":null,
+                    "stop_sequence":null,
+                    "usage":{"input_tokens":0,"output_tokens":0}
+                }
+            })
+        )
+    }
+
     fn stop_events(&self) -> String {
+        let stop = if self.finish_reason == "tool_calls" {
+            "tool_use"
+        } else {
+            "end_turn"
+        };
         format!(
             "event: message_delta\ndata: {}\n\nevent: message_stop\ndata: {}\n\n",
-            serde_json::json!({"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}),
+            serde_json::json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":null},"usage":{"output_tokens":0}}),
             serde_json::json!({"type":"message_stop"})
         )
     }
@@ -211,6 +255,7 @@ struct ToolCallInfo {
     id: String,
     name: String,
     arguments_json: String,
+    preamble: String,
     rest: String,
 }
 
@@ -260,6 +305,7 @@ fn detect_tool_call(buf: &str) -> Option<ToolCallInfo> {
             id: format!("toolu_{}", uuid::Uuid::new_v4().simple()),
             name,
             arguments_json,
+            preamble: cleaned[..start].trim().to_string(),
             rest,
         });
     }

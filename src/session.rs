@@ -28,7 +28,20 @@ impl SessionMap {
     }
 
     pub async fn insert(&self, key: &str, binding: SessionBinding) {
-        self.inner.write().await.insert(key.to_string(), binding);
+        let mut m = self.inner.write().await;
+        m.insert(key.to_string(), binding);
+        // 防无界增长：超过阈值清理最旧（按 last_active 字典序近似）
+        if m.len() > 5000 {
+            let mut keys: Vec<(String, String)> = m
+                .iter()
+                .map(|(k, v)| (k.clone(), v.last_active.clone()))
+                .collect();
+            keys.sort_by(|a, b| a.1.cmp(&b.1));
+            let remove_n = m.len() - 4000;
+            for (k, _) in keys.into_iter().take(remove_n) {
+                m.remove(&k);
+            }
+        }
     }
 
     pub async fn len(&self) -> usize {

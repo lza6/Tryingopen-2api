@@ -36,6 +36,8 @@ pub struct AppState {
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        // 生产防护：限制请求体大小（多模态 base64 图/长文上限 16MB，防内存打爆）
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
         .route("/", get(handle_dashboard))
         .route("/ui", get(handle_dashboard))
         .route("/healthz", get(handle_healthz))
@@ -720,9 +722,18 @@ async fn handle_claude_messages(
                 content.push(json!({ "type": "thinking", "thinking": nr.reasoning }));
             }
             content.push(json!({ "type": "text", "text": nr.text }));
-            let usage = nr.usage.clone().unwrap_or_else(
-                || json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }),
-            );
+            // Anthropic usage 键名：prompt_tokens→input_tokens、completion_tokens→output_tokens
+            let usage = nr
+                .usage
+                .as_ref()
+                .map(|u| {
+                    json!({
+                        "input_tokens": u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0)),
+                        "output_tokens": u.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0)),
+                        "total_tokens": u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                    })
+                })
+                .unwrap_or(json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }));
             let resp = json!({
                 "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
                 "type": "message", "role": "assistant", "model": model,

@@ -257,39 +257,27 @@ where
 }
 
 /// 异步后台循环：抓取 → 解析 → 并发 HTTP 延迟预检 → 注入 → 周期刷新 + 剔除 + 降权
-pub async fn run_loop(
-    pool: std::sync::Arc<ProxyPool>,
-    refresh_min: u64,
-    stop: tokio::sync::watch::Receiver<bool>,
-) {
+pub async fn run_loop(pool: std::sync::Arc<ProxyPool>, refresh_min: u64) {
     let mut interval =
         tokio::time::interval(std::time::Duration::from_secs(refresh_min.max(1) * 60));
     interval.tick().await; // 第一次立即 tick
-    let has_stop = *stop.borrow();
-    if has_stop {
-        return;
-    }
     let _ = refresh_once(pool.as_ref()).await;
-    let mut recv = stop;
     loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                let _injected = refresh_once(pool.as_ref()).await;
-                if _injected > 0 {
-                    tracing::info!("免费代理刷新注入 {_injected} 个（池总数 {}）", pool.len().await);
-                }
-                let reaped = pool.reap_free().await;
-                if reaped > 0 {
-                    tracing::info!("剔除过期免费代理 {reaped} 个");
-                }
-                let demoted = pool.demote_bad(MAX_FAILS, MAX_LATENCY_MS).await;
-                if demoted > 0 {
-                    tracing::info!("连续失败/高延迟免费代理降权 {demoted} 个");
-                }
-            }
-            changed = recv.changed() => {
-                if changed.is_err() || *recv.borrow() { break; }
-            }
+        interval.tick().await;
+        let _injected = refresh_once(pool.as_ref()).await;
+        if _injected > 0 {
+            tracing::info!(
+                "免费代理刷新注入 {_injected} 个（池总数 {}）",
+                pool.len().await
+            );
+        }
+        let reaped = pool.reap_free().await;
+        if reaped > 0 {
+            tracing::info!("剔除过期免费代理 {reaped} 个");
+        }
+        let demoted = pool.demote_bad(MAX_FAILS, MAX_LATENCY_MS).await;
+        if demoted > 0 {
+            tracing::info!("连续失败/高延迟免费代理降权 {demoted} 个");
         }
     }
 }

@@ -293,7 +293,12 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}...", &s[..n])
+        // 按字符边界截断（避免 &s[..n] 在 UTF-8 中文字符中间 panic）
+        let mut end = n;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 }
 

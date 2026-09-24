@@ -87,6 +87,7 @@ struct ToolCallInfo {
     id: String,
     name: String,
     arguments_json: String,
+    preamble: String,
     rest: String,
 }
 
@@ -201,8 +202,19 @@ impl Stream for OpenAiTransform {
                                             self.tool_buf.clear();
                                             let model_name = self.model.clone();
                                             let created_ts = self.created;
-                                            self.pending_frames =
-                                                openai_tool_frames(&model_name, created_ts, &tc);
+                                            self.pending_frames = Vec::new();
+                                            if !tc.preamble.is_empty() {
+                                                self.pending_frames.push(content_frame(
+                                                    &model_name,
+                                                    created_ts,
+                                                    &tc.preamble,
+                                                ));
+                                            }
+                                            self.pending_frames.extend(openai_tool_frames(
+                                                &model_name,
+                                                created_ts,
+                                                &tc,
+                                            ));
                                             if !tc.rest.is_empty() {
                                                 self.pending_frames.push(content_frame(
                                                     &model_name,
@@ -375,6 +387,7 @@ fn detect_tool_call(buf: &str) -> Option<ToolCallInfo> {
             id: format!("call_{}", uuid::Uuid::new_v4().simple()),
             name,
             arguments_json,
+            preamble: cleaned[..start].trim().to_string(),
             rest,
         });
     }

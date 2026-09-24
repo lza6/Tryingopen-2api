@@ -179,7 +179,7 @@ struct PoolData {
     /// host:port → 当前 inflight 请求数
     inflight: HashMap<String, u32>,
     /// host:port → 全局并发 gate 许可（请求完成时释放）
-    permits: HashMap<String, Arc<tokio::sync::OwnedSemaphorePermit>>,
+    permits: HashMap<String, Vec<Arc<tokio::sync::OwnedSemaphorePermit>>>,
     /// host:port 去重索引
     keys: HashSet<String>,
 }
@@ -424,16 +424,9 @@ impl ProxyPool {
                     .unwrap()
             }
         } else {
-            data.entries
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| {
-                    a.cooldown_until
-                        .partial_cmp(&b.cooldown_until)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|(i, _)| i)
-                .unwrap_or(0)
+            // 全部出口在冷却/超配额：返回 None（尊重每 IP 每小时限流语义，
+            // 由上层直连兜底；不强行使用冷却中的代理引发上游 429）
+            return None;
         };
         let key = host_port_key(&data.entries[pick].url);
         {
@@ -444,7 +437,10 @@ impl ProxyPool {
             e.cooldown_until = t + cooldown_seconds(e.use_count, cooldown_map) as f64;
         }
         *data.inflight.entry(key.clone()).or_insert(0) += 1;
-        data.permits.insert(key.clone(), Arc::new(permit));
+        data.permits
+            .entry(key.clone())
+            .or_default()
+            .push(Arc::new(permit));
         Some(data.entries[pick].url.clone())
     }
 
@@ -528,7 +524,10 @@ impl ProxyPool {
                             let permit = gate.acquire_owned().await.expect("semaphore closed");
                             let mut data = self.inner.write().await;
                             *data.inflight.entry(key.clone()).or_insert(0) += 1;
-                            data.permits.insert(key.clone(), Arc::new(permit));
+                            data.permits
+                                .entry(key.clone())
+                                .or_default()
+                                .push(Arc::new(permit));
                             data.sticky.insert(session_id.to_string(), (url.clone(), t));
                             return Some(url);
                         }
