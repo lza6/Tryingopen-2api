@@ -6,7 +6,7 @@ TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开�
 
 **完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每小时约 20 次」限流，网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.1 增强**：代理池 44 源（实测 4500+ 代理）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -32,7 +32,7 @@ cargo build --release
 ```jsonc
 {
   "proxy_file": "data/proxies.txt",        // 住宅/自备代理，每行 http://user:pass@host:port
-  "free_proxy_enabled": true,              // 开启免费代理抓取（默认 false）
+  "free_proxy_enabled": true,              // 开启免费代理抓取（默认 true，44 源）
   "hourly_per_ip": 20,                     // tryingopen 单 IP 每小时限流
   "max_attempts": 3,                       // 每请求最多换几个出口
   "direct_fallback": true                  // 全部代理失败后直连兜底
@@ -211,3 +211,4 @@ docs/
 ├── PROTOCOL.md      # 上游协议逆向笔记
 └── ARCHITECTURE.md  # 架构说明
 ```
+
