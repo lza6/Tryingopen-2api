@@ -89,4 +89,3 @@ fn parse_ipport_rejects_invalid() {
     );
     assert_eq!(out.len(), 0);
 }
-

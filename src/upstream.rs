@@ -22,7 +22,7 @@ pub struct MessagePart {
     pub part_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "mediaType", default, skip_serializing_if = "Option::is_none")]
     pub media_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -225,6 +225,7 @@ pub fn parse_catalog_chunk(chunk: &str) -> Vec<crate::models::ModelMeta> {
             price_per_mtok: price_f,
             tools: flag("supportsTools"),
             vision: flag("supportsImages"),
+            source: "dynamic".into(),
         });
     }
     out
@@ -295,3 +296,28 @@ fn truncate(s: &str, n: usize) -> String {
         format!("{}...", &s[..n])
     }
 }
+
+/// 判断错误是否「模型不存在」（HTTP 4xx + model 相关语义）
+pub fn is_model_not_found_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    let http_4xx =
+        lower.contains("http 4") || lower.contains("upstream-4") || lower.contains("status 4");
+    if !http_4xx {
+        return false;
+    }
+    let model_kw = lower.contains("model") || lower.contains("模型");
+    if !model_kw {
+        return false;
+    }
+    [
+        "not found",
+        "不存在",
+        "invalid",
+        "无效",
+        "unknown",
+        "not_found",
+    ]
+    .iter()
+    .any(|k| lower.contains(k))
+}
+

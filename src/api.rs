@@ -128,6 +128,13 @@ pub struct ChatRequest {
     pub tool_choice: Option<serde_json::Value>,
     #[serde(default)]
     pub user: Option<String>,
+    /// 思考程度（balanced/deep/low 等，上游决定）
+    #[serde(default = "default_effort")]
+    pub effort: String,
+}
+
+fn default_effort() -> String {
+    "balanced".into()
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,9 +221,24 @@ fn build_upstream_request(
     messages: &[ChatMessage],
     images: Vec<MessagePart>,
     effort: &str,
+    tools: Option<&serde_json::Value>,
+    tool_choice: Option<&serde_json::Value>,
 ) -> StreamRequest {
     let mut converted: Vec<UpstreamMessage> = Vec::new();
     let mut system_texts: Vec<String> = Vec::new();
+    // 工具调用模式：把工具定义注入系统提示（上游无原生 tool_calls，模型按纯文本 JSON 输出）
+    if let Some(tools) = tools {
+        if tools.as_array().map(|v| !v.is_empty()).unwrap_or(false) {
+            let mut instr = format!("[TOOL CALLING MODE]\nAvailable tools (JSON): {}", tools);
+            if let Some(tc) = tool_choice {
+                instr.push_str(&format!("\nTool choice: {}", tc));
+            }
+            instr.push_str(
+                "\nIf you need to call a tool, respond with ONLY a single JSON object and no other text, no markdown fences: {\"tool_call\":{\"name\":\"<exact tool name>\",\"arguments\":{...}}}",
+            );
+            system_texts.push(instr);
+        }
+    }
     for m in messages {
         if m.role == "system" {
             let t = message_text(&m.content);
@@ -319,7 +341,19 @@ async fn handle_chat_completions(
     let model = state.registry.resolve(&body.model).await;
 
     let images = extract_image_parts(&body.messages);
-    let req = build_upstream_request(&model, &body.messages, images, "balanced");
+    let tool_mode = body
+        .tools
+        .as_ref()
+        .map(|t| t.as_array().map(|v| !v.is_empty()).unwrap_or(false))
+        .unwrap_or(false);
+    let req = build_upstream_request(
+        &model,
+        &body.messages,
+        images,
+        &body.effort,
+        body.tools.as_ref(),
+        body.tool_choice.as_ref(),
+    );
 
     let thread_key = body
         .user
@@ -331,20 +365,31 @@ async fn handle_chat_completions(
         Ok(up) => {
             state.sessions.touch(&thread_key).await;
             if body.stream {
-                let s = openai_events(up, &model, created);
+                let s = openai_events(up, &model, created, tool_mode);
                 let body = axum::body::Body::from_stream(s);
                 SseResponse { body }.into_response()
             } else {
-                let text = collect_nonstream_text(up).await;
-                let body =
-                    crate::protocol::openai_sse_helper::openai_nonstream(&text, &model, created);
+                let nr = collect_nonstream(up).await;
+                let body = crate::protocol::openai_sse_helper::openai_nonstream_full(
+                    &nr.text,
+                    &nr.reasoning,
+                    nr.usage.as_ref(),
+                    &model,
+                    created,
+                );
                 Response::builder()
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from(text_body(&body)))
                     .unwrap()
             }
         }
-        Err(e) => api_err_response(e),
+        Err(e) => {
+            // 上游 model-not-found → 标记模型下线（避免继续请求已移除模型）
+            if crate::upstream::is_model_not_found_error(e.message()) {
+                state.registry.mark_offline(&model).await;
+            }
+            api_err_response(e)
+        }
     }
 }
 
@@ -405,12 +450,40 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
     }
 }
 
-/// 非流式：收集上游所有 chunk 拼成完整文本
-async fn collect_nonstream_text(up: reqwest::Response) -> String {
+/// 非流式收集结果
+pub struct NonstreamResult {
+    pub text: String,
+    pub reasoning: String,
+    pub usage: Option<serde_json::Value>,
+}
+
+fn tokens_from_metadata(meta: &serde_json::Value) -> Option<serde_json::Value> {
+    let input = meta.get("inputTokens").and_then(|v| v.as_i64());
+    let output = meta.get("outputTokens").and_then(|v| v.as_i64());
+    let total = meta.get("totalTokens").and_then(|v| v.as_i64());
+    let reasoning = meta.get("reasoningTokens").and_then(|v| v.as_i64());
+    if input.is_none() && output.is_none() && total.is_none() {
+        return None;
+    }
+    let mut u = serde_json::json!({
+        "prompt_tokens": input.unwrap_or(0),
+        "completion_tokens": output.unwrap_or(0),
+        "total_tokens": total.unwrap_or(input.unwrap_or(0) + output.unwrap_or(0)),
+    });
+    if let Some(r) = reasoning {
+        u["reasoning_tokens"] = serde_json::Value::from(r);
+    }
+    Some(u)
+}
+
+/// 非流式：收集上游所有 chunk 拼成完整文本 + 思考 + usage
+async fn collect_nonstream(up: reqwest::Response) -> NonstreamResult {
     let reader = crate::protocol::stream::reader_with_bytes(up.bytes_stream());
     let mut reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
-    let mut out = String::new();
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut usage: Option<serde_json::Value> = None;
     loop {
         line.clear();
         use tokio::io::AsyncBufReadExt;
@@ -421,19 +494,33 @@ async fn collect_nonstream_text(up: reqwest::Response) -> String {
         if let Some(data) = t.strip_prefix("data: ") {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                 match v.get("type").and_then(|x| x.as_str()).unwrap_or("") {
-                    "text-delta" => {
+                    "reasoning-delta" => {
                         if let Some(d) = v.get("delta").and_then(|d| d.as_str()) {
-                            out.push_str(d);
+                            reasoning.push_str(d);
                         }
                     }
+                    "text-delta" => {
+                        if let Some(d) = v.get("delta").and_then(|d| d.as_str()) {
+                            text.push_str(d);
+                        }
+                    }
+                    "finish" => {
+                        if let Some(meta) = v.get("messageMetadata") {
+                            usage = tokens_from_metadata(meta);
+                        }
+                        break;
+                    }
                     "error" => break,
-                    "finish" => break,
                     _ => {}
                 }
             }
         }
     }
-    out
+    NonstreamResult {
+        text,
+        reasoning,
+        usage,
+    }
 }
 
 fn text_body(s: &str) -> String {
@@ -457,6 +544,9 @@ pub struct AnthropicRequest {
     pub tools: Option<serde_json::Value>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+    /// 思考程度（balanced/deep/low 等，上游决定）
+    #[serde(default = "default_effort")]
+    pub effort: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -536,8 +626,20 @@ async fn handle_claude_messages(
     state.sessions.ensure(&thread_key, &model).await;
 
     // 组装上游消息：系统 + 历史 user/assistant + 图片
+    let tool_mode = body
+        .tools
+        .as_ref()
+        .map(|t| t.as_array().map(|v| !v.is_empty()).unwrap_or(false))
+        .unwrap_or(false);
     let mut up_msgs: Vec<UpstreamMessage> = Vec::new();
     let mut system_texts: Vec<String> = Vec::new();
+    if tool_mode {
+        let instr = format!(
+            "[TOOL CALLING MODE]\nAvailable tools (JSON): {}\nIf you need to call a tool, respond with ONLY a single JSON object and no other text, no markdown fences: {{\"tool_call\":{{\"name\":\"<exact tool name>\",\"arguments\":{{...}}}}}}",
+            body.tools.as_ref().unwrap()
+        );
+        system_texts.push(instr);
+    }
     if let Some(sys) = &body.system {
         let t = anthropic_text(sys);
         if !t.is_empty() {
@@ -592,7 +694,7 @@ async fn handle_claude_messages(
         trigger: "submit-message".into(),
         message_id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
         model: model.clone(),
-        effort: "balanced".into(),
+        effort: body.effort.clone(),
         messages: up_msgs,
         stream: true,
     };
@@ -601,23 +703,41 @@ async fn handle_claude_messages(
         Ok(up) => {
             state.sessions.touch(&thread_key).await;
             if body.stream {
-                let s = crate::protocol::anthropic_sse::anthropic_events(up, &model, &thread_key);
+                let s = crate::protocol::anthropic_sse::anthropic_events(
+                    up,
+                    &model,
+                    &thread_key,
+                    tool_mode,
+                );
                 return AnthropicSseResponse {
                     body: axum::body::Body::from_stream(s),
                 }
                 .into_response();
             }
-            let text = collect_nonstream_text(up).await;
+            let nr = collect_nonstream(up).await;
+            let mut content: Vec<serde_json::Value> = Vec::new();
+            if !nr.reasoning.is_empty() {
+                content.push(json!({ "type": "thinking", "thinking": nr.reasoning }));
+            }
+            content.push(json!({ "type": "text", "text": nr.text }));
+            let usage = nr.usage.clone().unwrap_or_else(
+                || json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }),
+            );
             let resp = json!({
                 "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
                 "type": "message", "role": "assistant", "model": model,
-                "content": [{ "type": "text", "text": text }],
+                "content": content,
                 "stop_reason": "end_turn", "stop_sequence": null,
-                "usage": { "input_tokens": 0, "output_tokens": 0 }
+                "usage": usage
             });
             Json(resp).into_response()
         }
-        Err(e) => api_err_response_anthropic(e),
+        Err(e) => {
+            if crate::upstream::is_model_not_found_error(e.message()) {
+                state.registry.mark_offline(&model).await;
+            }
+            api_err_response_anthropic(e)
+        }
     }
 }
 

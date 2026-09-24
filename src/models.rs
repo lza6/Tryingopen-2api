@@ -5,9 +5,9 @@
 //! 上游请求 id 就是 `provider/model`（如 `qwen/qwen3.8-27b`）。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
 pub const DEFAULT_MODEL: &str = "qwen/qwen3.8-27b";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +28,13 @@ pub struct ModelMeta {
     pub tools: bool,
     /// 支持图片输入
     pub vision: bool,
+    /// 目录来源：dynamic（上游抓取）/ static（内置兜底；抓取失败时即 fallback 状态）
+    #[serde(default = "default_source")]
+    pub source: String,
+}
+
+fn default_source() -> String {
+    "static".into()
 }
 
 /// 静态目录（与 07cl9ce_x7idy.js 快照一致；动态抓取失败时兜底）
@@ -44,6 +51,7 @@ pub fn catalog() -> Vec<ModelMeta> {
                 price_per_mtok: $price,
                 tools: $tools,
                 vision: $vision,
+                source: "static".into(),
             });
         };
     }
@@ -173,6 +181,8 @@ pub fn parse_ctx(ctx: &str) -> i64 {
 #[derive(Debug, Clone)]
 pub struct ModelRegistry {
     inner: Arc<RwLock<Vec<ModelMeta>>>,
+    /// 上游已移除/报 model-not-found 的模型（请求时自动走 fallback、/v1/models 隐藏）
+    forced_offline: Arc<RwLock<HashSet<String>>>,
 }
 
 impl Default for ModelRegistry {
@@ -185,19 +195,61 @@ impl ModelRegistry {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(catalog())),
+            forced_offline: Arc::new(RwLock::new(HashSet::new())),
+        }
+    }
+
+    /// 模型是否被强制下线（上游移除 / model-not-found）
+    async fn is_offline(&self, id: &str) -> bool {
+        self.forced_offline.read().await.contains(id)
+    }
+
+    /// 标记模型下线（上游 4xx model-not-found）
+    pub async fn mark_offline(&self, id: &str) {
+        self.forced_offline.write().await.insert(id.to_string());
+    }
+
+    /// 解除下线（目录刷新带回来等）
+    pub async fn unmark_offline(&self, id: &str) {
+        self.forced_offline.write().await.remove(id);
+    }
+
+    /// 当前离线 id 集合（测试/审计用）
+    pub async fn offline_ids(&self) -> Vec<String> {
+        self.forced_offline.read().await.iter().cloned().collect()
+    }
+
+    /// 目录来源标记：设置为 "fallback"（动态抓取失败时由调用方标记）
+    pub async fn mark_static_fallback(&self) {
+        let mut list = self.inner.write().await;
+        for m in list.iter_mut() {
+            if m.source == "static" {
+                m.source = "fallback".into();
+            }
         }
     }
 
     pub async fn all(&self) -> Vec<ModelMeta> {
-        self.inner.read().await.clone()
+        let offline = self.forced_offline.read().await;
+        let list = self.inner.read().await;
+        list.iter()
+            .filter(|m| !offline.contains(&m.id))
+            .cloned()
+            .collect()
     }
 
     pub async fn meta(&self, id: &str) -> Option<ModelMeta> {
+        if self.is_offline(id).await {
+            return None;
+        }
         let list = self.inner.read().await;
         list.iter().find(|m| m.id == id).cloned()
     }
 
     pub async fn has_model(&self, id: &str) -> bool {
+        if self.is_offline(id).await {
+            return false;
+        }
         self.inner.read().await.iter().any(|m| m.id == id)
     }
 
@@ -210,9 +262,13 @@ impl ModelRegistry {
         if self.has_model(r).await {
             return r.to_string();
         }
-        // 裸名（如 deepseek-v4-flash-0731）→ 补 provider 前缀
+        // 裸名（如 deepseek-v4-flash-0731）→ 补 provider 前缀（跳过离线模型）
+        let offline = self.forced_offline.read().await;
         let list = self.inner.read().await;
         let matched = list.iter().find_map(|m| {
+            if offline.contains(&m.id) {
+                return None;
+            }
             if let Some(surface) = m.id.rsplit('/').next() {
                 if surface == r {
                     return Some(m.id.clone());
@@ -251,6 +307,11 @@ impl ModelRegistry {
         }
         let mut list = self.inner.write().await;
         *list = records;
+        // 剪除 offline 标记中已不在新目录的 id（目录更新 = 上游最新状态）
+        {
+            let mut offline = self.forced_offline.write().await;
+            offline.retain(|id| list.iter().any(|m| &m.id == id));
+        }
         list.len()
     }
 }
