@@ -320,4 +320,3 @@ pub fn is_model_not_found_error(err: &str) -> bool {
     .iter()
     .any(|k| lower.contains(k))
 }
-
