@@ -32,6 +32,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .panel { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:20px; }
 .panel h2 { font-size:15px; margin-bottom:12px; color:var(--muted); font-weight:600; }
 table { width:100%; border-collapse:collapse; font-size:13px; }
+td.num { text-align:right; }
 th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); }
 th { color:var(--muted); font-weight:500; }
 .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; }
@@ -49,7 +50,12 @@ input:focus,textarea:focus,select:focus { border-color:var(--accent); }
 label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
 .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .empty { color:var(--muted); font-size:13px; padding:12px 4px; }
+.statbar { display:flex; gap:18px; flex-wrap:wrap; font-size:13px; padding:10px 12px; margin-top:12px; border:1px dashed var(--border); border-radius:8px; color:var(--muted); }
+.statbar b { color:var(--text); }
+.icon-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--ok); margin-right:6px; vertical-align:middle; animation:blink 1.4s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
 #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--accent); padding:10px 20px; border-radius:10px; display:none; z-index:100; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+.tblwrap { overflow-x:auto; }
 .guide-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-family:ui-monospace,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; }
 </style>
 </head>
@@ -76,11 +82,13 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
       <div class="card"><div class="lbl">代理总数</div><div class="num" id="c-proxies">-</div></div>
       <div class="card"><div class="lbl">免费代理</div><div class="num" id="c-free">-</div></div>
       <div class="card"><div class="lbl">可用代理</div><div class="num" id="c-avail">-</div></div>
+      <div class="card"><div class="lbl">剩余可用次数</div><div class="num" id="c-capacity">-</div></div>
     </div>
     <div class="panel"><h2>说明</h2><p style="line-height:1.8;color:var(--muted);font-size:13px">
       TryingOpen2API 把 <b>tryingopen.com</b> 的免费开源模型（13 个）逆向为 OpenAI / Anthropic 兼容本地网关。
       完全匿名：<b>不需要 Cookie / 登录 / API Key</b>。站点按「每 IP 每小时约 20 次」限流，
       网关自动用代理池轮换出口 IP（住宅代理文件 + 免费代理源），429 时自动换出口并退避重试，
+      容量 = 可用出口 IP × 每 IP 每小时 20 次 − 已用次数（字段就绪前显示 -），
       全部失败后直连兜底。
     </p></div>
   </section>
@@ -92,11 +100,20 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
         <button class="ghost sm" onclick="refreshFree()">手动抓免费代理</button>
         <span style="color:var(--muted);font-size:12px">住宅代理文件在 config.json 的 proxy_file 字段（每行一个 http://user:pass@host:port）</span>
       </div>
+      <div class="statbar">
+        <span><span class="icon-dot"></span>15s 自动刷新</span>
+        <span>上次刷新 <b id="proxy-last">-</b></span>
+        <span>免费 <b id="proxy-free">-</b></span>
+        <span>住宅 <b id="proxy-res">-</b></span>
+        <span>总量 <b id="proxy-total">-</b></span>
+        <span>可用出口 <b id="proxy-avail">-</b></span>
+        <span>剩余次数 <b id="proxy-cap">-</b></span>
+      </div>
       <div class="empty" id="proxy-empty">暂无代理数据</div>
-      <table id="proxy-table" style="display:none">
-        <thead><tr><th>出口</th><th>来源</th><th>今日次数</th><th>健康分</th><th>冷却</th><th>连续失败</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="tblwrap"><table id="proxy-table" style="display:none">
+        <thead><tr><th>出口</th><th>来源</th><th>延迟</th><th>今日次数</th><th>容量剩余</th><th>健康分</th><th>冷却</th><th>连续失败</th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table></div>
     </div>
   </section>
 
@@ -106,14 +123,17 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
         <button class="ghost sm" onclick="refreshCatalog()">同步上游目录</button>
         <span style="color:var(--muted);font-size:12px">启动时自动抓取；失败保留内置静态目录</span>
       </div>
-      <table id="model-table">
+      <div class="tblwrap"><table id="model-table">
         <thead><tr><th>模型 ID</th><th>名称</th><th>上下文</th><th>价格/M</th><th>工具</th><th>视觉</th></tr></thead>
-        <tbody></tbody>
-      </table>
+        <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table></div>
     </div>
   </section>
 
   <section id="tab-guide" style="display:none">
+    <div class="panel"><h2>默认 effort（思考程度）</h2>
+      <div class="guide-box">客户端在 chat/completions 请求体传 <b>effort</b> 字段：&#10;- balanced：默认，均衡思考&#10;- deep：深度思考（更慢更稳）&#10;- low：低思考（更快更省）&#10;当前主要支持 reasoning 类模型（如 qwen/qwen3.8-27b）；不支持时模型会忽略该字段。模型支持情况以 /api/models（后端补 meta 后）为准。</div>
+    </div>
     <div class="panel"><h2>OpenAI 兼容</h2>
       <div class="guide-box">Base URL: http://127.0.0.1:PORT/v1&#10;API Key: sk-local（未配置 api_keys 时任意）&#10;模型: qwen/qwen3.8-27b</div>
     </div>
@@ -154,6 +174,7 @@ async function loadOverview() {
     const snap = await j('/api/proxies');
     document.getElementById('c-free').textContent = snap.free ?? 0;
     document.getElementById('c-avail').textContent = snap.available ?? 0;
+    document.getElementById('c-capacity').textContent = (typeof snap.capacity_remaining === 'number') ? snap.capacity_remaining : '-'; // TODO: capacity_total/capacity_used/capacity_remaining 由代理池 worker 补
   } catch (e) { document.getElementById('dot').className = 'dot err'; toast('加载失败: ' + e.message); }
 }
 async function refreshProxies() {
@@ -164,13 +185,24 @@ async function refreshProxies() {
     const items = snap.items || [];
     document.getElementById('proxy-empty').style.display = items.length ? 'none' : '';
     document.getElementById('proxy-table').style.display = items.length ? '' : 'none';
+    const fmtCap = (v) => (typeof v === 'number' && isFinite(v)) ? v : '-';
     for (const it of items) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${it.host_port || '-'}</td><td>${it.source || ''}</td><td>${it.daily_uses ?? 0}</td>` +
+      tr.innerHTML = `<td>${it.host_port || '-'}</td><td>${it.source || ''}</td>` +
+        `<td class="num">${(typeof it.latency_ms === 'number') ? it.latency_ms + ' ms' : '-'}</td>` +
+        `<td class="num">${it.daily_uses ?? 0}</td>` +
+        `<td class="num">${fmtCap(it.capacity_remaining)}</td>` +
         `<td><span class="badge ${it.health_score >= .8 ? 'ok' : it.health_score >= .4 ? 'warn' : 'err'}">${it.health_score}</span></td>` +
-        `<td>${it.cooling ? it.cooldown_seconds + 's' : '✓'}</td><td>${it.fails ?? 0}</td>`;
+        `<td>${it.cooling ? it.cooldown_seconds + 's' : '✓'}</td><td class="num">${it.fails ?? 0}</td>`;
       tb.appendChild(tr);
     }
+    const now = new Date();
+    document.getElementById('proxy-last').textContent = now.toLocaleTimeString() + ' ' + now.toLocaleDateString();
+    document.getElementById('proxy-free').textContent = snap.free ?? '-';
+    document.getElementById('proxy-res').textContent = snap.residential ?? '-';
+    document.getElementById('proxy-total').textContent = snap.total ?? '-';
+    document.getElementById('proxy-avail').textContent = snap.available ?? '-';
+    document.getElementById('proxy-cap').textContent = fmtCap(snap.capacity_remaining); // TODO: 字段由代理池 worker 补
     loadOverview();
   } catch (e) { toast('代理池读取失败: ' + e.message); }
 }
@@ -189,22 +221,33 @@ async function refreshCatalog() {
   } catch (e) { toast('目录同步失败: ' + e.message); }
 }
 async function loadModels() {
+  const tb = document.querySelector('#model-table tbody');
   try {
     const list = await j('/v1/models');
-    const tb = document.querySelector('#model-table tbody');
     tb.innerHTML = '';
     const metas = {};
     for (const m of list.data || []) metas[m.id] = m;
+    let guideIds = [];
+    try { const g = await j('/api/guide'); guideIds = g.models || []; } catch (e) {}
+    for (const id of guideIds) { if (!metas[id]) metas[id] = { id }; }
     const ids = Object.keys(metas);
     if (ids.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="empty">暂无模型</td></tr>'; return; }
+    const todo = 'TODO(后端 /api/models 或 /v1/models 补 meta 字段)';
     for (const id of ids) {
+      const m = metas[id] || {};
+      const ctx = m.context || m.context_window || '-';
+      const price = (typeof m.price_per_mtok === 'number') ? '$' + m.price_per_mtok : (m.price_per_mtok || '-');
+      const tools = (m.tools === true) ? '<span class="badge ok">工具</span>' : (m.tools === false ? '-' : '<span class="badge warn" title="' + todo + '">' + todo + '</span>');
+      const vision = (m.vision === true) ? '<span class="badge ok">视觉</span>' : (m.vision === false ? '-' : '<span class="badge warn" title="' + todo + '">' + todo + '</span>');
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${id}</td><td>${metas[id].owned_by || ''}</td><td>-</td><td>-</td><td>-</td><td>-</td>`;
+      tr.innerHTML = `<td>${id}</td><td>${m.label || m.owned_by || '-'}</td><td>${ctx}</td>` +
+        `<td class="num">${price}</td><td>${tools}</td><td>${vision}</td>`;
       tb.appendChild(tr);
     }
-  } catch (e) { toast('模型读取失败: ' + e.message); }
+  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="empty">模型读取失败: ' + e.message + '</td></tr>'; toast('模型读取失败: ' + e.message); }
 }
 loadOverview(); refreshProxies(); loadModels();
+setInterval(() => { loadOverview(); refreshProxies(); }, 15000);
 </script>
 </body>
 </html>
