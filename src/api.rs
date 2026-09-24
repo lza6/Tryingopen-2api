@@ -701,6 +701,14 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                     is_429,
                     msg
                 );
+                // 模型暂停/容量不足：不继续轮换白等，立即短路返回
+                // （换更多出口也一样暂停，快速失败让客户端换模型）
+                if crate::upstream::is_model_paused_error(&msg) {
+                    return Err(ApiError::upstream(format!(
+                        "模型当前暂停/容量不足，请换一个模型重试: {}",
+                        msg
+                    )));
+                }
                 last_err = Some(msg);
                 tokio::time::sleep(Duration::from_secs(2u64.pow(attempt.min(3) as u32))).await;
             }
@@ -714,11 +722,17 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                 return Ok(resp);
             }
             Err(e) => {
+                let msg = e.to_string();
                 tracing::warn!(
-                    "PROXY_FAIL attempt=direct model={} proxy=direct err={e}",
+                    "PROXY_FAIL attempt=direct model={} proxy=direct err={msg}",
                     req.model
                 );
-                last_err = Some(e.to_string());
+                if crate::upstream::is_model_paused_error(&msg) {
+                    return Err(ApiError::upstream(format!(
+                        "模型当前暂停/容量不足，请换一个模型重试: {msg}"
+                    )));
+                }
+                last_err = Some(msg);
             }
         }
     }

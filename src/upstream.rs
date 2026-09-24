@@ -342,9 +342,30 @@ pub fn is_model_not_found_error(err: &str) -> bool {
     true
 }
 
+/// 判断错误是否「模型暂停 / 容量不足」（临时不可用，非永久下线）
+/// tryingopen 真实返回：GLM 5.2 is paused while we bring up more capacity. Pick another model to keep going.
+pub fn is_model_paused_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    let paused_kw = [
+        "is paused",
+        "paused while",
+        "bring up more capacity",
+        "at capacity",
+        "overloaded",
+        "temporarily unavailable",
+        "too much traffic",
+        "容量不足",
+        "暂时不可用",
+        "已暂停",
+    ]
+    .iter()
+    .any(|k| lower.contains(k));
+    paused_kw
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_model_not_found_error;
+    use super::{is_model_not_found_error, is_model_paused_error};
 
     #[test]
     fn model_not_found_tryingopen_that_model_isnt_on_page() {
@@ -365,5 +386,15 @@ mod tests {
         assert!(!is_model_not_found_error("upstream timeout"));
         assert!(!is_model_not_found_error("HTTP 500 internal error"));
         assert!(!is_model_not_found_error("upstream-429 rate limited"));
+    }
+
+    #[test]
+    fn model_paused_tryingopen_glm() {
+        // 生产真实返回：GLM 5.2 is paused while we bring up more capacity
+        let err = "上游对话流失败 HTTP 400 Bad Request: {\"error\":\"GLM 5.2 is paused while we bring up more capacity. Pick another model to keep going.\"}";
+        assert!(is_model_paused_error(err), "应识别为模型暂停: {err}");
+        // 非暂停错误不误判
+        assert!(!is_model_paused_error("That model isn't on this page."));
+        assert!(!is_model_paused_error("upstream timeout"));
     }
 }
