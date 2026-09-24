@@ -124,7 +124,17 @@ async fn handle_dashboard(State(state): State<AppState>, headers: HeaderMap) -> 
                 .unwrap();
         }
     }
-    Html(crate::web::INDEX_HTML.to_string()).into_response()
+    // 面板已通过 UI 密码鉴权：把当前 API key 注入前端 JS，
+    // 让 /v1/models、/api/proxies 等受保护端点在面板内自动带 x-api-key 访问
+    let mut keys = state.api_keys.read().map(|g| g.clone()).unwrap_or_default();
+    for k in &state.cfg.api_keys {
+        if !keys.contains(k) {
+            keys.push(k.clone());
+        }
+    }
+    let keys_json = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into());
+    let html = crate::web::INDEX_HTML.replace("__API_KEYS_JSON__", &keys_json);
+    Html(html).into_response()
 }
 
 async fn handle_healthz(State(state): State<AppState>) -> Json<serde_json::Value> {

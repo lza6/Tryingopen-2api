@@ -149,7 +149,13 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
 <script>
 const PORT = location.port || "47831";
 const API = "";
+// 后端渲染面板时注入当前 API key（面板已过 Basic Auth，安全）
+const API_KEYS = __API_KEYS_JSON__;
 async function j(path, opts) {
+  opts = opts || {};
+  const headers = new Headers(opts.headers || {});
+  if (Array.isArray(API_KEYS) && API_KEYS.length > 0) headers.set('x-api-key', API_KEYS[0]);
+  opts.headers = headers;
   const r = await fetch(API + path, opts);
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d?.error?.message || (r.status + " " + r.statusText));
