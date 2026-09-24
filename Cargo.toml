@@ -1,6 +1,6 @@
 [package]
 name = "tryingopen2api"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "TryingOpen 免费模型 OpenAI/Anthropic 兼容 API 网关（Rust 版，代理池故障轮换）"
 authors = ["lza6"]
@@ -46,4 +46,5 @@ strip = true
 # replace-with = "vendored-sources"
 # [source.vendored-sources]
 # directory = "vendor"
+
 
