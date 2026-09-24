@@ -149,7 +149,11 @@ pub fn sanitize_proxy_url(raw: &str) -> Option<String> {
     }
     let norm = normalize_proxy_url(raw);
     let rest = norm.split("://").nth(1).unwrap_or(&norm);
-    let host = if let Some(at) = rest.rfind('@') { &rest[at + 1..] } else { rest };
+    let host = if let Some(at) = rest.rfind('@') {
+        &rest[at + 1..]
+    } else {
+        rest
+    };
     let host = host.split(':').next().unwrap_or(host);
     let host = host.trim_end_matches('/');
     // 拒绝非 IP 的 hostname（住宅文件也要求 IP:port）
@@ -159,8 +163,13 @@ pub fn sanitize_proxy_url(raw: &str) -> Option<String> {
     let ip: std::net::IpAddr = host.parse().ok()?;
     let bad = match ip {
         std::net::IpAddr::V4(v4) => {
-            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_multicast()
-                || v4.is_unspecified() || v4.is_broadcast() || v4.is_documentation()
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
         }
         std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_multicast() || v6.is_unspecified(),
     };
@@ -169,7 +178,6 @@ pub fn sanitize_proxy_url(raw: &str) -> Option<String> {
     }
     Some(norm)
 }
-
 
 /// host:port 去重键（忽略 scheme 与 user:pass）
 pub fn host_port_key(url: &str) -> String {
@@ -660,4 +668,3 @@ pub fn add_free_dedupe_helper(urls: Vec<String>) -> Vec<String> {
     }
     out
 }
-
