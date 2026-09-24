@@ -180,7 +180,8 @@ async function loadOverview() {
     const snap = await j('/api/proxies');
     document.getElementById('c-free').textContent = snap.free ?? 0;
     document.getElementById('c-avail').textContent = snap.available ?? 0;
-    document.getElementById('c-capacity').textContent = (typeof snap.capacity_remaining === 'number') ? snap.capacity_remaining : '-'; // TODO: capacity_total/capacity_used/capacity_remaining 由代理池 worker 补
+    const capRem = snap.capacity?.capacity_remaining;
+    document.getElementById('c-capacity').textContent = (typeof capRem === 'number' && isFinite(capRem)) ? capRem : '-';
   } catch (e) { document.getElementById('dot').className = 'dot err'; toast('加载失败: ' + e.message); }
 }
 async function refreshProxies() {
@@ -208,7 +209,7 @@ async function refreshProxies() {
     document.getElementById('proxy-res').textContent = snap.residential ?? '-';
     document.getElementById('proxy-total').textContent = snap.total ?? '-';
     document.getElementById('proxy-avail').textContent = snap.available ?? '-';
-    document.getElementById('proxy-cap').textContent = fmtCap(snap.capacity_remaining); // TODO: 字段由代理池 worker 补
+    document.getElementById('proxy-cap').textContent = fmtCap(snap.capacity?.capacity_remaining);
     loadOverview();
   } catch (e) { toast('代理池读取失败: ' + e.message); }
 }
