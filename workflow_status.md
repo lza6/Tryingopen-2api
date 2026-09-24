@@ -44,3 +44,21 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 - 按 N7 P3：/metrics（Prometheus）、Dockerfile、可选 Redis 缓存
 - 非流工具调用转 tool_calls（与流式一致）
 - config.fallback_models 接入 resolve
+
+## 生产就绪度补漏（公网部署后，2026-09-25）
+
+| 节点 | 内容 | 状态 | 验收证据 |
+|---|---|---|---|
+| P1 | Rate Limiting（API key 限流防滥用） | ⬜ | 超限 429，配置化 per-key/全局限额 |
+| P2 | Circuit Breaker（上游故障熔断） | ⬜ | 连续失败开/半开/关，自动恢复 |
+| P3 | Observability（/metrics + 用量统计） | ⬜ | Prometheus 指标可抓，调用计数 |
+| P4 | Graceful Shutdown（SIGTERM 平滑退出） | ⬜ | 停止时完成在途请求 |
+| P5 | 文档同步（部署后状态） | ⬜ | README/SOP/验证记录更新 |
+| P6 | 真实验收（公网限流/熔断/metrics） | ⬜ | 数据证据 |
+
+## 验证记录（防重复）
+- [x] 门禁 fmt/clippy/25tests（每次改动复跑）
+- [x] CI main push 全绿
+- [x] 公网 E2E：healthz/UI 401+200/API key 对话 200
+- [x] 服务器 systemd 双服务（主 + cf 隧道）
+- 本轮改动后复跑：门禁 + 公网限流/熔断/metrics 实测
