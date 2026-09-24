@@ -140,6 +140,37 @@ pub fn normalize_proxy_url(raw: &str) -> String {
     }
 }
 
+/// 校验代理 URL 的 host 是否为公网可路由地址（防住宅代理文件被污染 → SSRF/内网注入）
+/// 返回 (是否合法, 规范化 URL)
+pub fn sanitize_proxy_url(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.starts_with('#') {
+        return None;
+    }
+    let norm = normalize_proxy_url(raw);
+    let rest = norm.split("://").nth(1).unwrap_or(&norm);
+    let host = if let Some(at) = rest.rfind('@') { &rest[at + 1..] } else { rest };
+    let host = host.split(':').next().unwrap_or(host);
+    let host = host.trim_end_matches('/');
+    // 拒绝非 IP 的 hostname（住宅文件也要求 IP:port）
+    if host.parse::<std::net::IpAddr>().is_err() {
+        return None;
+    }
+    let ip: std::net::IpAddr = host.parse().ok()?;
+    let bad = match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_multicast()
+                || v4.is_unspecified() || v4.is_broadcast() || v4.is_documentation()
+        }
+        std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_multicast() || v6.is_unspecified(),
+    };
+    if bad {
+        return None;
+    }
+    Some(norm)
+}
+
+
 /// host:port 去重键（忽略 scheme 与 user:pass）
 pub fn host_port_key(url: &str) -> String {
     let rest = url.split("://").nth(1).unwrap_or(url);
@@ -226,7 +257,10 @@ impl ProxyPool {
                     if u.is_empty() || u.starts_with('#') {
                         continue;
                     }
-                    let norm = normalize_proxy_url(u);
+                    // 住宅代理文件也做公网地址校验（防污染 → SSRF/内网注入）
+                    let Some(norm) = sanitize_proxy_url(u) else {
+                        continue;
+                    };
                     let key = host_port_key(&norm);
                     if data.keys.contains(&key) || fresh.iter().any(|f| host_port_key(f) == key) {
                         continue;
@@ -261,7 +295,10 @@ impl ProxyPool {
         let mut fresh: Vec<(String, u64)> = Vec::new();
         let mut fresh_keys: HashSet<String> = HashSet::new();
         for (u, latency) in urls {
-            let norm = normalize_proxy_url(&u);
+            // 防御纵深：免费代理同样做公网地址校验
+            let Some(norm) = sanitize_proxy_url(&u) else {
+                continue;
+            };
             let key = host_port_key(&norm);
             if data.keys.contains(&key) || !fresh_keys.insert(key) {
                 continue;
@@ -623,3 +660,4 @@ pub fn add_free_dedupe_helper(urls: Vec<String>) -> Vec<String> {
     }
     out
 }
+
