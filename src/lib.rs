@@ -16,6 +16,7 @@ pub mod config;
 pub mod errors;
 pub mod free_proxy;
 pub mod models;
+pub mod prod_guard;
 pub mod protocol;
 pub mod proxy_pool;
 pub mod session;

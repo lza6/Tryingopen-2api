@@ -114,6 +114,18 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let limiter = Arc::new(tryingopen2api::prod_guard::RateLimiter::new(
+        cfg.rate_limit_enabled,
+        cfg.rate_limit_requests,
+        cfg.rate_limit_window_sec,
+    ));
+    let breaker = Arc::new(tryingopen2api::prod_guard::CircuitBreaker::new(
+        cfg.circuit_breaker_enabled,
+        cfg.cb_failure_threshold,
+        cfg.cb_timeout_sec,
+    ));
+    let metrics = Arc::new(tryingopen2api::prod_guard::Metrics::new());
+
     let state = AppState {
         cfg: Arc::new(cfg),
         client,
@@ -121,11 +133,42 @@ async fn main() -> anyhow::Result<()> {
         registry,
         sessions,
         api_keys,
+        limiter,
+        breaker,
+        metrics,
     };
 
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
     tracing::info!("HTTP 服务已启动: http://{listen_addr}");
-    axum::serve(listener, app).await?;
+    // 优雅停机：Ctrl-C / SIGTERM / SIGINT 触发，等待在途请求完成后再退出
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+/// 优雅停机信号：Windows Ctrl-C（ctrl_c）+ Unix SIGTERM/SIGINT
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => { tracing::info!("received Ctrl-C, graceful shutdown..."); }
+        _ = terminate => { tracing::info!("received SIGTERM, graceful shutdown..."); }
+    }
 }

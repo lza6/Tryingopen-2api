@@ -74,6 +74,40 @@ pub struct Config {
     /// Web 面板访问密码（空=不鉴权；设置后 / 和 /ui 需 Basic Auth）
     #[serde(default)]
     pub ui_password: String,
+    /// ── 生产保护：限流 / 熔断 / 可观测性 ──
+    /// 每 API Key 限流开关（默认开）
+    #[serde(default = "default_true")]
+    pub rate_limit_enabled: bool,
+    /// 窗口内最大请求数
+    #[serde(default = "default_rate_limit_requests")]
+    pub rate_limit_requests: u64,
+    /// 限流窗口长度（秒）
+    #[serde(default = "default_rate_limit_window_sec")]
+    pub rate_limit_window_sec: u64,
+    /// 上游整体熔断开关（默认开）
+    #[serde(default = "default_true")]
+    pub circuit_breaker_enabled: bool,
+    /// 连续失败多少次后 OPEN
+    #[serde(default = "default_cb_failure_threshold")]
+    pub cb_failure_threshold: u32,
+    /// OPEN 后多久进入 HALF_OPEN 探测
+    #[serde(default = "default_cb_timeout_sec")]
+    pub cb_timeout_sec: u64,
+    /// Prometheus /metrics 端点开关（默认开）
+    #[serde(default = "default_true")]
+    pub metrics_enabled: bool,
+}
+fn default_rate_limit_requests() -> u64 {
+    60
+}
+fn default_rate_limit_window_sec() -> u64 {
+    3600
+}
+fn default_cb_failure_threshold() -> u32 {
+    5
+}
+fn default_cb_timeout_sec() -> u64 {
+    30
 }
 fn default_listen() -> String {
     "127.0.0.1:47831".into()
@@ -152,6 +186,13 @@ impl Default for Config {
             telemetry_path: default_telemetry(),
             skip_upstream_check: default_true(),
             ui_password: String::new(),
+            rate_limit_enabled: default_true(),
+            rate_limit_requests: default_rate_limit_requests(),
+            rate_limit_window_sec: default_rate_limit_window_sec(),
+            circuit_breaker_enabled: default_true(),
+            cb_failure_threshold: default_cb_failure_threshold(),
+            cb_timeout_sec: default_cb_timeout_sec(),
+            metrics_enabled: default_true(),
             redact_logs: default_true(),
         }
     }
@@ -220,9 +261,31 @@ impl Config {
         }
         if let Ok(v) = std::env::var("DIRECT_FALLBACK") {
             cfg.direct_fallback = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
-            if let Ok(v) = std::env::var("UI_PASSWORD") {
-                cfg.ui_password = v;
-            }
+        }
+        if let Ok(v) = std::env::var("UI_PASSWORD") {
+            cfg.ui_password = v;
+        }
+        // ── 生产保护：限流 / 熔断 / 可观测性（环境变量覆盖）──
+        if let Ok(v) = std::env::var("RATE_LIMIT_ENABLED") {
+            cfg.rate_limit_enabled = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
+        }
+        if let Ok(v) = std::env::var("RATE_LIMIT_REQUESTS") {
+            cfg.rate_limit_requests = v.parse().unwrap_or(cfg.rate_limit_requests);
+        }
+        if let Ok(v) = std::env::var("RATE_LIMIT_WINDOW_SEC") {
+            cfg.rate_limit_window_sec = v.parse().unwrap_or(cfg.rate_limit_window_sec);
+        }
+        if let Ok(v) = std::env::var("CB_ENABLED") {
+            cfg.circuit_breaker_enabled = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
+        }
+        if let Ok(v) = std::env::var("CB_FAILURE_THRESHOLD") {
+            cfg.cb_failure_threshold = v.parse().unwrap_or(cfg.cb_failure_threshold);
+        }
+        if let Ok(v) = std::env::var("CB_TIMEOUT_SEC") {
+            cfg.cb_timeout_sec = v.parse().unwrap_or(cfg.cb_timeout_sec);
+        }
+        if let Ok(v) = std::env::var("METRICS_ENABLED") {
+            cfg.metrics_enabled = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
         }
         Ok(cfg)
     }

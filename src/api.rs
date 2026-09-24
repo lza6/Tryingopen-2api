@@ -32,10 +32,13 @@ pub struct AppState {
     pub registry: Arc<ModelRegistry>,
     pub sessions: Arc<SessionMap>,
     pub api_keys: Arc<std::sync::RwLock<Vec<String>>>,
+    pub limiter: Arc<crate::prod_guard::RateLimiter>,
+    pub breaker: Arc<crate::prod_guard::CircuitBreaker>,
+    pub metrics: Arc<crate::prod_guard::Metrics>,
 }
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let mut router = Router::new()
         // 生产防护：限制请求体大小（多模态 base64 图/长文上限 16MB，防内存打爆）
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
         .route("/", get(handle_dashboard))
@@ -48,8 +51,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/proxies/refresh-free", post(handle_refresh_free))
         .route("/api/catalog/refresh", post(handle_catalog_refresh))
         .route("/api/guide", get(handle_guide))
-        .route("/api/config/api-key", post(handle_config_api_key))
-        .with_state(state)
+        .route("/api/config/api-key", post(handle_config_api_key));
+    if state.cfg.metrics_enabled {
+        router = router.route("/metrics", get(handle_metrics));
+    }
+    router.with_state(state)
 }
 
 // ---------- 认证 ----------
@@ -128,6 +134,76 @@ async fn handle_healthz(State(state): State<AppState>) -> Json<serde_json::Value
         json!({ "ok": true, "app": "tryingopen2api", "version": env!("CARGO_PKG_VERSION"),
         "upstream": state.cfg.upstream_base_url, "models": model_count, "proxies": proxy_count }),
     )
+}
+
+// ---------- 生产保护 helper ----------
+
+async fn handle_metrics(State(state): State<AppState>) -> Response {
+    let pool_size = state.pool.len().await;
+    let snap = state.pool.snapshot(state.cfg.hourly_per_ip).await;
+    let available = snap["available"].as_u64().unwrap_or(0) as usize;
+    let sessions = state.sessions.len().await;
+    let body = state.metrics.render(pool_size, available, sessions);
+    Response::builder()
+        .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+        .body(axum::body::Body::from(body))
+        .unwrap()
+}
+
+/// 提取已认证的 API key（Bearer 或 x-api-key）
+fn request_key(headers: &HeaderMap) -> Option<String> {
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let bearer = auth.strip_prefix("Bearer ").unwrap_or("").trim();
+    if !bearer.is_empty() {
+        return Some(bearer.to_string());
+    }
+    let x = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    if !x.is_empty() {
+        return Some(x.to_string());
+    }
+    None
+}
+
+/// 429 响应（带 Retry-After）
+fn rate_limited_response(e: ApiError, retry_after: u64) -> Response {
+    let mut resp = (e.status(), e.openai_json()).into_response();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&retry_after.to_string()) {
+        resp.headers_mut()
+            .insert(axum::http::header::RETRY_AFTER, v);
+    }
+    resp
+}
+
+/// 熔断 OPEN：503
+fn cb_open_response() -> Response {
+    (axum::http::StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({
+        "error": { "message": "上游服务暂不可用（熔断保护中），请稍后重试", "type": "upstream_error", "code": null }
+    }))).into_response()
+}
+
+/// 上游错误分类（用于 metrics）
+fn upstream_error_kind(e: &ApiError) -> &'static str {
+    match e {
+        ApiError::RateLimited(_) => "rate_limited",
+        ApiError::Upstream(msg) => {
+            let m = msg.to_lowercase();
+            if m.contains("timed out") || m.contains("timeout") {
+                "timeout"
+            } else if m.contains("429") {
+                "rate_limited"
+            } else {
+                "network"
+            }
+        }
+        _ => "other",
+    }
 }
 
 // ---------- /v1/models ----------
@@ -368,8 +444,40 @@ async fn handle_chat_completions(
     headers: HeaderMap,
     Json(body): Json<ChatRequest>,
 ) -> Response {
+    let start = std::time::Instant::now();
     if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        state
+            .metrics
+            .record_request("v1_chat_completions", "openai", "4xx");
+        state
+            .metrics
+            .observe_duration(start.elapsed().as_secs_f64());
         return api_err_response(e);
+    }
+    // 每 API Key 限流（公网防滥用）
+    if let Some(key) = request_key(&headers) {
+        if let Err(retry_after) = state.limiter.check(&key) {
+            state
+                .metrics
+                .record_request("v1_chat_completions", "openai", "429");
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
+            return rate_limited_response(
+                ApiError::rate_limited("请求过于频繁，请稍后重试"),
+                retry_after,
+            );
+        }
+    }
+    // 上游熔断：OPEN 时直接 503
+    if !state.breaker.allow() {
+        state
+            .metrics
+            .record_request("v1_chat_completions", "openai", "5xx");
+        state
+            .metrics
+            .observe_duration(start.elapsed().as_secs_f64());
+        return cb_open_response();
     }
     let created = chrono::Utc::now().timestamp();
     let model = state.registry.resolve(&body.model).await;
@@ -397,6 +505,13 @@ async fn handle_chat_completions(
 
     match try_rounds(&state, &req).await {
         Ok(up) => {
+            state.breaker.record_success();
+            state
+                .metrics
+                .record_request("v1_chat_completions", "openai", "2xx");
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
             state.sessions.touch(&thread_key).await;
             if body.stream {
                 let s = openai_events(up, &model, created, tool_mode);
@@ -422,6 +537,22 @@ async fn handle_chat_completions(
             if crate::upstream::is_model_not_found_error(e.message()) {
                 state.registry.mark_offline(&model).await;
             }
+            // 熔断：非限流错误计为失败
+            if !matches!(e, ApiError::RateLimited(_)) {
+                state.breaker.record_failure();
+            }
+            let class = if e.status().is_client_error() {
+                "4xx"
+            } else {
+                "5xx"
+            };
+            state
+                .metrics
+                .record_request("v1_chat_completions", "openai", class);
+            state.metrics.record_upstream_error(upstream_error_kind(&e));
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
             api_err_response(e)
         }
     }
@@ -638,8 +769,38 @@ async fn handle_claude_messages(
     headers: HeaderMap,
     Json(body): Json<AnthropicRequest>,
 ) -> Response {
+    let start = std::time::Instant::now();
     if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        state
+            .metrics
+            .record_request("v1_messages", "anthropic", "4xx");
+        state
+            .metrics
+            .observe_duration(start.elapsed().as_secs_f64());
         return api_err_response_anthropic(e);
+    }
+    if let Some(key) = request_key(&headers) {
+        if let Err(retry_after) = state.limiter.check(&key) {
+            state
+                .metrics
+                .record_request("v1_messages", "anthropic", "429");
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
+            return rate_limited_response(
+                ApiError::rate_limited("请求过于频繁，请稍后重试"),
+                retry_after,
+            );
+        }
+    }
+    if !state.breaker.allow() {
+        state
+            .metrics
+            .record_request("v1_messages", "anthropic", "5xx");
+        state
+            .metrics
+            .observe_duration(start.elapsed().as_secs_f64());
+        return cb_open_response();
     }
     let model = state.registry.resolve(&body.model).await;
 
@@ -648,6 +809,12 @@ async fn handle_claude_messages(
         .map(|m| anthropic_text(&m.content))
         .unwrap_or_default();
     if content.trim().is_empty() && anthropic_image_parts(&body.messages).is_empty() {
+        state
+            .metrics
+            .record_request("v1_messages", "anthropic", "4xx");
+        state
+            .metrics
+            .observe_duration(start.elapsed().as_secs_f64());
         return api_err_response_anthropic(ApiError::bad_request("消息内容为空"));
     }
 
@@ -735,6 +902,13 @@ async fn handle_claude_messages(
 
     match try_rounds(&state, &req).await {
         Ok(up) => {
+            state.breaker.record_success();
+            state
+                .metrics
+                .record_request("v1_messages", "anthropic", "2xx");
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
             state.sessions.touch(&thread_key).await;
             if body.stream {
                 let s = crate::protocol::anthropic_sse::anthropic_events(
@@ -779,6 +953,21 @@ async fn handle_claude_messages(
             if crate::upstream::is_model_not_found_error(e.message()) {
                 state.registry.mark_offline(&model).await;
             }
+            if !matches!(e, ApiError::RateLimited(_)) {
+                state.breaker.record_failure();
+            }
+            let class = if e.status().is_client_error() {
+                "4xx"
+            } else {
+                "5xx"
+            };
+            state
+                .metrics
+                .record_request("v1_messages", "anthropic", class);
+            state.metrics.record_upstream_error(upstream_error_kind(&e));
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
             api_err_response_anthropic(e)
         }
     }
