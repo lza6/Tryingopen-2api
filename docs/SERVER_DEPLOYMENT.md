@@ -10,7 +10,7 @@
 | 公网 IP | 20.204.27.154 |
 | SSH | root@20.204.27.154（用户提供密码） |
 | 架构 | Ubuntu 22.04 ARM64 (aarch64)，2核 952MB |
-| 服务端口 | 47831（Azure NSG 需放行后公网可访问） |
+| 服务端口 | 47831（内网）；公网经 Cloudflare Quick Tunnel |
 | 服务方式 | systemd（tryingopen2api.service，restart=always） |
 | 二进制 | /opt/tryingopen2api/bin/tryingopen2api（7.5MB） |
 | 配置 | /opt/tryingopen2api/config.json |
@@ -80,3 +80,17 @@ curl http://127.0.0.1:47831/healthz    # 本机探活
 ## 安全注意
 - 配置含 key/密码：勿提交 git、勿外泄
 - 生产用 HTTP（Azure 公网）；如需 HTTPS 建议前端挂 Nginx + Let's Encrypt
+
+## Cloudflare Quick Tunnel（变通方案，已上线）
+
+> Azure NSG 未放行 47831，故用 Cloudflare Quick Tunnel（出站连接，绕开入站 NSG）。
+
+- systemd 服务：`tryingopen-cf-tunnel.service`（restart=always）
+- 命令：`/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:47831 --no-autoupdate`
+- 日志：`journalctl -u tryingopen-cf-tunnel -f`
+- **注意**：免费 quick tunnel 的 URL 在服务重启后会变；查看当前 URL：
+  ```bash
+  journalctl -u tryingopen-cf-tunnel --no-pager | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | tail -1
+  ```
+- 若需固定域名：Cloudflare 面板创建 Named Tunnel（需自有域名）+ `cloudflared tunnel route dns`，配置写入 `/etc/cloudflared/config.yml`
+- 若后续在 Azure 门户放行 47831，可直接用 `http://20.204.27.154:47831` 访问（无需隧道）
