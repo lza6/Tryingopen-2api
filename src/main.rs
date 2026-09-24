@@ -71,19 +71,18 @@ async fn main() -> anyhow::Result<()> {
     let n_res = pool.load_file(&cfg.proxy_file).await;
     if n_res > 0 {
         tracing::info!("代理池加载住宅代理 {n_res} 个");
-        {
-            let pool2 = pool.clone();
-            let enabled = cfg.free_proxy_enabled;
-            let refresh_min = cfg.free_proxy_refresh_min;
-            if enabled {
-                let p = pool2.clone();
-                // 无限循环后台任务（进程生命周期内运行；JoinHandle 本身即 detach）
-                tokio::spawn(async move {
-                    free_proxy::run_loop(p, refresh_min).await;
-                });
-                tracing::info!("免费代理抓取后台已启动（每 {} 分钟刷新）", refresh_min);
-            }
-        }
+    }
+    // 免费代理后台循环：无论住宅文件是否有内容都启动
+    // （否则空文件/缺失时池永远为空，免费抓取永远不跑）
+    let enabled = cfg.free_proxy_enabled;
+    let refresh_min = cfg.free_proxy_refresh_min;
+    if enabled {
+        let p = pool.clone();
+        // 无限循环后台任务（进程生命周期内运行；JoinHandle 本身即 detach）
+        tokio::spawn(async move {
+            free_proxy::run_loop(p, refresh_min).await;
+        });
+        tracing::info!("免费代理抓取后台已启动（每 {} 分钟刷新）", refresh_min);
     }
     let sessions = Arc::new(SessionMap::new());
     let api_keys = Arc::new(std::sync::RwLock::new(cfg.api_keys.clone()));
