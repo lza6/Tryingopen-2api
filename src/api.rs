@@ -198,6 +198,36 @@ fn cb_open_response() -> Response {
     }))).into_response()
 }
 
+/// 请求日志：脱敏 key + 结构化字段（打开黑匣子）
+fn log_request(
+    endpoint: &str,
+    key: Option<&str>,
+    model: &str,
+    stream: bool,
+    status: &str,
+    detail: Option<&str>,
+    elapsed: std::time::Duration,
+) {
+    let masked = key
+        .map(|k| {
+            if k.len() <= 8 {
+                "***".to_string()
+            } else {
+                format!("{}***{}", &k[..4], &k[k.len() - 4..])
+            }
+        })
+        .unwrap_or_else(|| "-".to_string());
+    let ms = elapsed.as_millis();
+    match detail {
+        Some(d) => tracing::info!(
+            "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms detail={d}"
+        ),
+        None => tracing::info!(
+            "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms"
+        ),
+    }
+}
+
 /// 上游错误分类（用于 metrics）
 fn upstream_error_kind(e: &ApiError) -> &'static str {
     match e {
@@ -462,6 +492,15 @@ async fn handle_chat_completions(
         state
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
+        log_request(
+            "v1_chat_completions",
+            request_key(&headers).as_deref(),
+            body.model.as_str(),
+            body.stream,
+            "401",
+            Some(e.message()),
+            start.elapsed(),
+        );
         return api_err_response(e);
     }
     // 每 API Key 限流（公网防滥用）
@@ -473,6 +512,15 @@ async fn handle_chat_completions(
             state
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
+            log_request(
+                "v1_chat_completions",
+                Some(key.as_str()),
+                body.model.as_str(),
+                body.stream,
+                "429",
+                Some(&format!("retry_after={retry_after}s")),
+                start.elapsed(),
+            );
             return rate_limited_response(
                 ApiError::rate_limited("请求过于频繁，请稍后重试"),
                 retry_after,
@@ -487,6 +535,15 @@ async fn handle_chat_completions(
         state
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
+        log_request(
+            "v1_chat_completions",
+            request_key(&headers).as_deref(),
+            body.model.as_str(),
+            body.stream,
+            "503",
+            Some("circuit_breaker_open"),
+            start.elapsed(),
+        );
         return cb_open_response();
     }
     let created = chrono::Utc::now().timestamp();
@@ -524,11 +581,29 @@ async fn handle_chat_completions(
                 .observe_duration(start.elapsed().as_secs_f64());
             state.sessions.touch(&thread_key).await;
             if body.stream {
+                log_request(
+                    "v1_chat_completions",
+                    request_key(&headers).as_deref(),
+                    &model,
+                    true,
+                    "200",
+                    Some("streaming-sse"),
+                    start.elapsed(),
+                );
                 let s = openai_events(up, &model, created, tool_mode);
                 let body = axum::body::Body::from_stream(s);
                 SseResponse { body }.into_response()
             } else {
                 let nr = collect_nonstream(up).await;
+                log_request(
+                    "v1_chat_completions",
+                    request_key(&headers).as_deref(),
+                    &model,
+                    false,
+                    "200",
+                    Some(&format!("text={} tok", nr.text.chars().count())),
+                    start.elapsed(),
+                );
                 let body = crate::protocol::openai_sse_helper::openai_nonstream_full(
                     &nr.text,
                     &nr.reasoning,
@@ -556,6 +631,10 @@ async fn handle_chat_completions(
             } else {
                 "5xx"
             };
+            let is_mnf = crate::upstream::is_model_not_found_error(e.message());
+            if is_mnf {
+                tracing::info!("MODEL_OFFLINE model={model} err={}", e.message());
+            }
             state
                 .metrics
                 .record_request("v1_chat_completions", "openai", class);
@@ -563,6 +642,15 @@ async fn handle_chat_completions(
             state
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
+            log_request(
+                "v1_chat_completions",
+                request_key(&headers).as_deref(),
+                &model,
+                body.stream,
+                &e.status().as_str().replace(" ", ""),
+                Some(e.message()),
+                start.elapsed(),
+            );
             api_err_response(e)
         }
     }
@@ -591,6 +679,12 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                 if let Some(u) = &proxy_str {
                     state.pool.mark_success(u).await;
                 }
+                tracing::debug!(
+                    "PROXY_OK attempt={} model={} proxy={}",
+                    attempt + 1,
+                    req.model,
+                    proxy_str.as_deref().unwrap_or("direct")
+                );
                 return Ok(resp);
             }
             Err(e) => {
@@ -599,6 +693,14 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                 if let Some(u) = &proxy_str {
                     state.pool.mark_failure(u, is_429, &cooldown).await;
                 }
+                tracing::warn!(
+                    "PROXY_FAIL attempt={} model={} proxy={} is429={} err={}",
+                    attempt + 1,
+                    req.model,
+                    proxy_str.as_deref().unwrap_or("none"),
+                    is_429,
+                    msg
+                );
                 last_err = Some(msg);
                 tokio::time::sleep(Duration::from_secs(2u64.pow(attempt.min(3) as u32))).await;
             }
@@ -607,8 +709,17 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
     // 直连兜底
     if state.cfg.direct_fallback {
         match state.client.stream(req, None).await {
-            Ok(resp) => return Ok(resp),
-            Err(e) => last_err = Some(e.to_string()),
+            Ok(resp) => {
+                tracing::debug!("PROXY_OK attempt=direct model={} proxy=direct", req.model);
+                return Ok(resp);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "PROXY_FAIL attempt=direct model={} proxy=direct err={e}",
+                    req.model
+                );
+                last_err = Some(e.to_string());
+            }
         }
     }
     let detail = last_err.unwrap_or_else(|| "全部出口失败".into());
@@ -787,6 +898,15 @@ async fn handle_claude_messages(
         state
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
+        log_request(
+            "v1_messages",
+            request_key(&headers).as_deref(),
+            body.model.as_str(),
+            body.stream,
+            "401",
+            Some(e.message()),
+            start.elapsed(),
+        );
         return api_err_response_anthropic(e);
     }
     if let Some(key) = request_key(&headers) {
@@ -797,6 +917,15 @@ async fn handle_claude_messages(
             state
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
+            log_request(
+                "v1_messages",
+                Some(key.as_str()),
+                body.model.as_str(),
+                body.stream,
+                "429",
+                Some(&format!("retry_after={retry_after}s")),
+                start.elapsed(),
+            );
             return rate_limited_response(
                 ApiError::rate_limited("请求过于频繁，请稍后重试"),
                 retry_after,
@@ -810,6 +939,15 @@ async fn handle_claude_messages(
         state
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
+        log_request(
+            "v1_messages",
+            request_key(&headers).as_deref(),
+            body.model.as_str(),
+            body.stream,
+            "503",
+            Some("circuit_breaker_open"),
+            start.elapsed(),
+        );
         return cb_open_response();
     }
     let model = state.registry.resolve(&body.model).await;
@@ -921,6 +1059,15 @@ async fn handle_claude_messages(
                 .observe_duration(start.elapsed().as_secs_f64());
             state.sessions.touch(&thread_key).await;
             if body.stream {
+                log_request(
+                    "v1_messages",
+                    request_key(&headers).as_deref(),
+                    &model,
+                    true,
+                    "200",
+                    Some("streaming-sse"),
+                    start.elapsed(),
+                );
                 let s = crate::protocol::anthropic_sse::anthropic_events(
                     up,
                     &model,
@@ -950,6 +1097,15 @@ async fn handle_claude_messages(
                     })
                 })
                 .unwrap_or(json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }));
+            log_request(
+                "v1_messages",
+                request_key(&headers).as_deref(),
+                &model,
+                false,
+                "200",
+                Some(&format!("text={} tok", nr.text.chars().count())),
+                start.elapsed(),
+            );
             let resp = json!({
                 "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
                 "type": "message", "role": "assistant", "model": model,
@@ -971,6 +1127,9 @@ async fn handle_claude_messages(
             } else {
                 "5xx"
             };
+            if crate::upstream::is_model_not_found_error(e.message()) {
+                tracing::info!("MODEL_OFFLINE model={model} err={}", e.message());
+            }
             state
                 .metrics
                 .record_request("v1_messages", "anthropic", class);
@@ -978,6 +1137,15 @@ async fn handle_claude_messages(
             state
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
+            log_request(
+                "v1_messages",
+                request_key(&headers).as_deref(),
+                &model,
+                body.stream,
+                &e.status().as_str().replace(" ", ""),
+                Some(e.message()),
+                start.elapsed(),
+            );
             api_err_response_anthropic(e)
         }
     }

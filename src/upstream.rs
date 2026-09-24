@@ -302,26 +302,68 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-/// 判断错误是否「模型不存在」（HTTP 4xx + model 相关语义）
+/// 判断错误是否「模型不存在」：
+/// - 优先匹配「HTTP 4xx + 模型语义词 + 不存在词」（覆盖 tryingopen 真实报错）
+/// - 也直接匹配「模型 + 不存在」纯语义（上游可能不带 HTTP 前缀）
 pub fn is_model_not_found_error(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
-    let http_4xx =
-        lower.contains("http 4") || lower.contains("upstream-4") || lower.contains("status 4");
-    if !http_4xx {
-        return false;
-    }
     let model_kw = lower.contains("model") || lower.contains("模型");
     if !model_kw {
         return false;
     }
-    [
+    let not_found_kw = [
         "not found",
         "不存在",
         "invalid",
         "无效",
         "unknown",
         "not_found",
+        // tryingopen.com 真实返回：That model isn't on this page.
+        "isn't on this page",
+        "not on this page",
+        "does not exist",
+        "no such model",
+        "not available",
+        "not supported",
+        "not_exist",
     ]
     .iter()
-    .any(|k| lower.contains(k))
+    .any(|k| lower.contains(k));
+    if !not_found_kw {
+        return false;
+    }
+    // 有明确 5xx 状态码 → 不是模型问题（服务端故障）
+    let http_5xx =
+        lower.contains("http 5") || lower.contains("upstream-5") || lower.contains("status 5");
+    if http_5xx {
+        return false;
+    }
+    // 命中「模型 + 不存在」：允许 4xx 前缀或无前缀（上游中文错误可能无 HTTP 前缀）
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_model_not_found_error;
+
+    #[test]
+    fn model_not_found_tryingopen_that_model_isnt_on_page() {
+        // 生产真实返回（anthropic/claude-sonnet-5 已下线）
+        let err =
+            "上游对话流失败 HTTP 400 Bad Request: {\"error\":\"That model isn't on this page.\"}";
+        assert!(is_model_not_found_error(err), "应识别为模型不存在: {err}");
+    }
+
+    #[test]
+    fn model_not_found_common_phrases() {
+        assert!(is_model_not_found_error("HTTP 404 model not found"));
+        assert!(is_model_not_found_error("模型不存在"));
+    }
+
+    #[test]
+    fn model_not_found_does_not_match_unrelated_errors() {
+        assert!(!is_model_not_found_error("upstream timeout"));
+        assert!(!is_model_not_found_error("HTTP 500 internal error"));
+        assert!(!is_model_not_found_error("upstream-429 rate limited"));
+    }
 }
