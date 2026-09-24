@@ -1,6 +1,6 @@
 [package]
 name = "tryingopen2api"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "TryingOpen 免费模型 OpenAI/Anthropic 兼容 API 网关（Rust 版，代理池故障轮换）"
 authors = ["lza6"]
