@@ -76,6 +76,11 @@
 ### POST /api/config/api-key
 - `{"action":"generate"|"set"|"clear","key":optional}` → `{"ok":true,"key":...}`
 
+### GET /ui（Basic Auth 保护）
+- 配置 `ui_password` 后需 `Authorization: Basic base64(任意用户:密码)`
+- 无密码/错密码 → 401 + `WWW-Authenticate: Basic realm="TryingOpen2API"`
+- /healthz 不受此限制（探活）
+
 ### GET /ui
 - 内置控制面板（HTML）
 
