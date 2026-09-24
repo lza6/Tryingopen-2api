@@ -35,8 +35,8 @@ pub struct Config {
     /// 住宅/自备代理文件：每行一个 http://user:pass@host:port 或 socks5://host:port
     #[serde(default)]
     pub proxy_file: String,
-    /// 免费代理抓取开关（默认关闭；tryingopen 免费额度充足时直连即可）
-    #[serde(default)]
+    /// 免费代理抓取开关（默认开启：30+ 源并发预检自动注入；可 FREE_PROXY_ENABLED=0 显式关闭）
+    #[serde(default = "default_true")]
     pub free_proxy_enabled: bool,
     /// 免费代理刷新周期（分钟）
     #[serde(default = "default_free_proxy_min")]
@@ -47,6 +47,12 @@ pub struct Config {
     /// 单请求最大出口尝试轮数（超出后直连兜底）
     #[serde(default = "default_max_attempts")]
     pub max_attempts: usize,
+    /// 代理池全局并发请求上限（同时打出去的不同出口数）
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent_requests: usize,
+    /// 免费代理并发预检窗口
+    #[serde(default = "default_precheck_concurrency")]
+    pub precheck_concurrency: usize,
     /// 递增冷却秒数映射（逗号分隔；第 N 次使用后等待 X 秒）
     #[serde(default = "default_cooldown_map")]
     pub cooldown_map: String,
@@ -98,6 +104,12 @@ fn default_hourly_per_ip() -> usize {
 fn default_max_attempts() -> usize {
     3
 }
+fn default_max_concurrent() -> usize {
+    64
+}
+fn default_precheck_concurrency() -> usize {
+    50
+}
 fn default_cooldown_map() -> String {
     "0,15,60,120,300".into()
 }
@@ -125,10 +137,12 @@ impl Default for Config {
             request_timeout_sec: default_timeout(),
             catalog_refresh_min: default_catalog_min(),
             proxy_file: String::new(),
-            free_proxy_enabled: false,
+            free_proxy_enabled: true,
             free_proxy_refresh_min: default_free_proxy_min(),
             hourly_per_ip: default_hourly_per_ip(),
             max_attempts: default_max_attempts(),
+            max_concurrent_requests: default_max_concurrent(),
+            precheck_concurrency: default_precheck_concurrency(),
             cooldown_map: default_cooldown_map(),
             direct_fallback: default_true(),
             sqlite_path: default_sqlite(),
@@ -194,6 +208,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("COOLDOWN_MAP") {
             cfg.cooldown_map = v;
+        }
+        if let Ok(v) = std::env::var("MAX_CONCURRENT_REQUESTS") {
+            cfg.max_concurrent_requests = v.parse().unwrap_or(cfg.max_concurrent_requests);
+        }
+        if let Ok(v) = std::env::var("PRECHECK_CONCURRENCY") {
+            cfg.precheck_concurrency = v.parse().unwrap_or(cfg.precheck_concurrency);
         }
         if let Ok(v) = std::env::var("DIRECT_FALLBACK") {
             cfg.direct_fallback = matches!(v.trim().to_lowercase().as_str(), "1" | "true");

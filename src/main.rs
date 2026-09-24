@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 代理池
     let pool = Arc::new(ProxyPool::new());
+    pool.set_limits(Some(cfg.max_concurrent_requests)).await;
     let n_res = pool.load_file(&cfg.proxy_file).await;
     if n_res > 0 {
         tracing::info!("代理池加载住宅代理 {n_res} 个");
