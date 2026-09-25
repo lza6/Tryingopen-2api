@@ -366,7 +366,8 @@ fn render_tool_calls(calls: &serde_json::Value) -> String {
     out
 }
 
-/// 上游按整段对话计长度。超预算时丢掉最旧的非系统消息，避免 HTTP 413。
+/// 上游按整段对话计长度（站点级限制，约 2 万汉字上限）。超预算时：
+/// 优先丢弃最旧消息保最近的；若单条消息本身超长则硬截断该条文本，避免上游 413。
 fn truncate_upstream_messages(msgs: &mut Vec<UpstreamMessage>, max_chars: usize) {
     fn msg_len(m: &UpstreamMessage) -> usize {
         m.parts
@@ -374,25 +375,85 @@ fn truncate_upstream_messages(msgs: &mut Vec<UpstreamMessage>, max_chars: usize)
             .map(|p| p.text.as_deref().unwrap_or("").chars().count())
             .sum()
     }
+    fn set_text(m: &mut UpstreamMessage, t: &str) {
+        for p in m.parts.iter_mut() {
+            if p.part_type == "text" {
+                p.text = Some(t.to_string());
+                return;
+            }
+        }
+        m.parts.insert(
+            0,
+            MessagePart {
+                part_type: "text".into(),
+                text: Some(t.to_string()),
+                media_type: None,
+                url: None,
+            },
+        );
+    }
     let total: usize = msgs.iter().map(msg_len).sum();
-    if total <= max_chars || msgs.len() <= 1 {
+    if total <= max_chars {
         return;
     }
-    let mut keep_from = 0usize;
+    // 从旧到新累计，标记需要丢弃的旧消息
+    let mut drop_up_to = 0usize;
     let mut acc = 0usize;
-    for (i, m) in msgs.iter().enumerate().rev() {
+    let count = msgs.len();
+    for (i, m) in msgs.iter().enumerate() {
         let n = msg_len(m);
-        if acc + n > max_chars && i + 1 != msgs.len() {
-            keep_from = i + 1;
+        if acc + n > max_chars {
+            drop_up_to = i;
             break;
         }
         acc += n;
-        if i == 0 {
-            keep_from = 0;
-        }
     }
-    if keep_from > 0 {
-        msgs.drain(0..keep_from);
+    // 如果只有最后一条也要丢（说明单条超长），直接硬截断该条
+    if drop_up_to >= count.saturating_sub(1) {
+        // 单条/近尾部超长：保留最近 1/2 并硬截断每条文本
+        let keep = (msgs.len() / 2).max(1);
+        let keep_start = msgs.len() - keep;
+        let per = (max_chars / 2 / keep).max(1);
+        let mut updates: Vec<(usize, String)> = Vec::new();
+        for (idx, m) in msgs.iter().enumerate().skip(keep_start) {
+            let t = m
+                .parts
+                .iter()
+                .find(|p| p.part_type == "text")
+                .and_then(|p| p.text.as_deref())
+                .unwrap_or("");
+            let cut: String = t.chars().take(per).collect();
+            updates.push((idx, format!("{cut}…(内容过长已截断)")));
+        }
+        for (idx, t) in updates {
+            if let Some(m) = msgs.get_mut(idx) {
+                set_text(m, &t);
+            }
+        }
+        if msgs.len() > keep {
+            msgs.truncate(keep);
+            msgs.insert(
+                0,
+                UpstreamMessage {
+                    id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
+                    role: "user".into(),
+                    parts: vec![MessagePart {
+                        part_type: "text".into(),
+                        text: Some(
+                            "[earlier messages omitted: chat was too long for the upstream]".into(),
+                        ),
+                        media_type: None,
+                        url: None,
+                    }],
+                    metadata: None,
+                },
+            );
+        }
+        return;
+    }
+    // 丢弃最旧的 drop_up_to 条，保留剩余
+    if drop_up_to > 0 {
+        msgs.drain(0..drop_up_to);
         msgs.insert(
             0,
             UpstreamMessage {
@@ -561,7 +622,7 @@ fn build_upstream_request(
             metadata: None,
         });
     }
-    truncate_upstream_messages(&mut converted, 12_000);
+    truncate_upstream_messages(&mut converted, 16_000);
     // 系统提示 → 拼进第一条 user 的 [SYSTEM INSTRUCTIONS]（上游无 system 角色）
     if !system_texts.is_empty() {
         let sys = format!(
