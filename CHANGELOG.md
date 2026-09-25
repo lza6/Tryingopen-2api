@@ -1,3 +1,10 @@
+## 0.1.11 (2026-09-26) — 终局闭环第 4 轮（安全/协议/前端/发布）
+
+- 安全：日志脱敏按 char（修多字节 key panic DoS）；clear 需二次确认；/metrics 加鉴权；直连兜底配额；限流 map 上限
+- 协议：Anthropic error 后 message_stop；start_event 携带 model；图片去重；Anthropic 长度截断；非流式 error → 502
+- 前端：面板重写（API Key UI/fetch 超时/指南实时/表格兜底/XSS 转义）
+- 发布：CD 原子替换+回滚；compose healthcheck；config.local.json 覆盖通道
+
 ## 0.1.3-0.1.10 (2026-09-24~26) — 终局闭环系列修复
 
 - v0.1.10：OpenAI 工具调用多轮往返修复、/v1/responses（流式+非流式）、上游 413 截断短路

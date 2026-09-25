@@ -8,3 +8,6 @@ reference/*.txt
 !源代码、网络数据包/*.js
 !源代码、网络数据包/*.css
 graft/.cache/
+
+# 本地 config 覆盖（禁止提交真实凭据）
+config.local.json
