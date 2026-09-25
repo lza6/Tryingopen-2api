@@ -19,6 +19,7 @@
 | **B4** | 生产安全/加固（第 4 轮） | 🟡 修复中（Batch-1/3） | docs/audit/B4-security-hardening.md | 2026-09-26 |
 | **C4** | 前端/契约/UX（第 4 轮） | 🟡 修复中（Batch-3） | docs/audit/C4-frontend-contract.md | 2026-09-26 |
 | **D4** | 盲点/文档资产（第 4 轮） | 🟡 修复中（Batch-4） | docs/audit/D4-blindsight-docs.md | 2026-09-26 |
+| E2E-2026-09-26 | 公网无 key 探活 + 安全拒绝（v0.1.11） | 🟡 部分（带 key 待补） | docs/audit/E2E-2026-09-26.md | 2026-09-26 |
 
 ## 已验证（无需重复跑，除非改动涉及）
 - 依赖：cargo audit 本地 advisory-db（1269 条）扫 243 依赖 0 已知漏洞（2026-09-26）。如 Cargo.lock 变更需重跑。
