@@ -1134,7 +1134,21 @@ async fn handle_claude_messages(
             if !nr.reasoning.is_empty() {
                 content.push(json!({ "type": "thinking", "thinking": nr.reasoning }));
             }
-            content.push(json!({ "type": "text", "text": nr.text }));
+            // Anthropic 非流式工具调用：检测上游 tool_call JSON → 转 tool_use block
+            let tool_used =
+                if let Some(tc) = crate::protocol::openai_sse::detect_tool_call(&nr.text) {
+                    content.push(json!({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": serde_json::from_str::<serde_json::Value>(&tc.arguments_json)
+                            .unwrap_or(serde_json::Value::Null)
+                    }));
+                    true
+                } else {
+                    content.push(json!({ "type": "text", "text": nr.text }));
+                    false
+                };
             // Anthropic usage 键名：prompt_tokens→input_tokens、completion_tokens→output_tokens
             let usage = nr
                 .usage
@@ -1160,7 +1174,8 @@ async fn handle_claude_messages(
                 "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
                 "type": "message", "role": "assistant", "model": model,
                 "content": content,
-                "stop_reason": "end_turn", "stop_sequence": null,
+                "stop_reason": if tool_used { "tool_use" } else { "end_turn" },
+                "stop_sequence": null,
                 "usage": usage
             });
             Json(resp).into_response()
