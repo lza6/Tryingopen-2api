@@ -197,8 +197,18 @@ pub struct StreamAccum {
 }
 
 impl StreamAccum {
-    /// Map one OpenAI SSE frame (`data: ...`) into zero or more Responses SSE frames.
+    /// Map OpenAI SSE frames into Responses SSE.
+    /// One upstream frame may contain several `data:` lines separated by blank lines
+    /// (finish chunk + `[DONE]`); handle every segment.
     pub fn push(&mut self, frame: &str, resp_id: &str, model: &str) -> String {
+        let mut out = String::new();
+        for seg in frame.split("\n\n") {
+            out.push_str(&self.push_seg(seg, resp_id, model));
+        }
+        out
+    }
+
+    fn push_seg(&mut self, seg: &str, resp_id: &str, model: &str) -> String {
         let mut out = String::new();
         if !self.started {
             self.started = true;
@@ -207,7 +217,7 @@ impl StreamAccum {
                 json!({"type":"response.created","response":{"id":resp_id,"object":"response","status":"in_progress","model":model}})
             ));
         }
-        let data = frame.trim().strip_prefix("data:").unwrap_or("").trim();
+        let data = seg.trim().strip_prefix("data:").unwrap_or("").trim();
         if data == "[DONE]" {
             let body = completed_response(
                 resp_id,
@@ -227,9 +237,18 @@ impl StreamAccum {
         let Ok(v) = serde_json::from_str::<Value>(data) else {
             return out;
         };
-        let delta = &v["choices"][0]["delta"];
+        let Some(delta) = v
+            .get("choices")
+            .and_then(|x| x.get(0))
+            .and_then(|c| c.get("delta"))
+        else {
+            return out;
+        };
         if let Some(t) = delta.get("content").and_then(|x| x.as_str()) {
             if !t.is_empty() {
+                if !self.text.is_empty() {
+                    self.text.push(' ');
+                }
                 self.text.push_str(t);
                 out.push_str(&format!(
                     "event: response.output_text.delta\ndata: {}\n\n",
@@ -332,5 +351,20 @@ mod tests {
         assert_eq!(body["output"][0]["type"], "function_call");
         assert_eq!(body["output"][0]["name"], "get_weather");
         assert_eq!(body["status"], "completed");
+    }
+
+    #[test]
+    fn stream_done_segment_emits_completed() {
+        let mut acc = StreamAccum::default();
+        let frame1 = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+        let frame2 =
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        let out1 = acc.push(frame1, "resp_s", "m");
+        let out2 = acc.push(frame2, "resp_s", "m");
+        assert!(out1.contains("response.created"));
+        assert!(out1.contains("response.output_text.delta"));
+        assert!(out2.contains("response.completed"));
+        assert!(out2.contains("\"status\":\"completed\""));
+        assert_eq!(acc.text, "hi");
     }
 }
