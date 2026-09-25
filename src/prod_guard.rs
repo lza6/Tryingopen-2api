@@ -19,7 +19,10 @@ struct RateWindow {
 pub struct RateLimiter {
     enabled: bool,
     requests: u64,
+    /// 每个时间窗口内的计数阈值；count 达到该值后拒绝
     window: Duration,
+    /// 限流 map 最大条目数（防唯一 key 制造无界内存）
+    max_keys: usize,
     inner: Mutex<HashMap<String, RateWindow>>,
     /// 每 N 次 check 触发一次全量过期清理（防无界增长）
     sweep_counter: AtomicU64,
@@ -27,10 +30,15 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(enabled: bool, requests: u64, window_sec: u64) -> Self {
+        Self::with_max_keys(enabled, requests, window_sec, 4096)
+    }
+
+    pub fn with_max_keys(enabled: bool, requests: u64, window_sec: u64, max_keys: usize) -> Self {
         Self {
             enabled,
             requests: requests.max(1),
             window: Duration::from_secs(window_sec.max(1)),
+            max_keys: max_keys.max(1),
             inner: Mutex::new(HashMap::new()),
             sweep_counter: AtomicU64::new(0),
         }
@@ -51,28 +59,30 @@ impl RateLimiter {
         if n.is_multiple_of(256) {
             map.retain(|_, w| now < w.start + self.window);
         }
+        // 限流 map 有界：超过 max_keys 时先清过期；仍满则拒绝新 key（保留既有 key 计数）
+        if !map.contains_key(key) && !map.is_empty() && map.len() >= self.max_keys {
+            return Err(1);
+        }
         let window_end = match map.get(key) {
-            Some(w) if now < w.start + self.window => {
-                let end = w.start + self.window;
-                let entry = map.get_mut(key).unwrap();
-                entry.count += 1;
-                end
-            }
+            Some(w) if now < w.start + self.window => w.start + self.window,
             _ => {
                 map.insert(
                     key.to_string(),
                     RateWindow {
                         start: now,
-                        count: 1,
+                        count: 0,
                     },
                 );
                 now + self.window
             }
         };
-        if map.get(key).map(|w| w.count).unwrap_or(0) > self.requests {
+        // 尾部判定：达到阈值后不再计数（避免第 N+1 次后继续递增制造假峰值）
+        let entry = map.get_mut(key).unwrap();
+        if entry.count >= self.requests {
             let retry = window_end.saturating_duration_since(now).as_secs().max(1);
             return Err(retry);
         }
+        entry.count += 1;
         Ok(())
     }
 
@@ -405,6 +415,28 @@ mod tests {
         cb.record_failure();
         assert!(cb.allow());
         assert_eq!(cb.state(), CbState::Closed);
+    }
+
+    #[test]
+    fn rate_limiter_max_keys_bounded() {
+        let rl = RateLimiter::new(true, 1, 3600);
+        assert!(rl.len() <= 4096);
+        // 大量唯一 key 不超过上限，且超限后新 key 被拒
+        for i in 0..4500u32 {
+            let _ = rl.check(&format!("key-{i}"));
+        }
+        assert_eq!(rl.len(), 4096);
+    }
+
+    #[test]
+    fn rate_limiter_tail_semantics() {
+        let rl = RateLimiter::new(true, 2, 60);
+        let t0 = Instant::now();
+        assert!(rl.check_at("k", t0).is_ok());
+        assert!(rl.check_at("k", t0 + Duration::from_secs(1)).is_ok());
+        // 第 3 次起拒绝，且 count 不再增长（窗口剩余不会被耗尽）
+        assert!(rl.check_at("k", t0 + Duration::from_secs(2)).is_err());
+        assert!(rl.check_at("k", t0 + Duration::from_secs(3)).is_err());
     }
 
     #[test]

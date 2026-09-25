@@ -33,6 +33,8 @@ pub struct AppState {
     pub sessions: Arc<SessionMap>,
     pub api_keys: Arc<std::sync::RwLock<Vec<String>>>,
     pub limiter: Arc<crate::prod_guard::RateLimiter>,
+    /// 直连兜底专用配额（匿名上游约束，全局共享，防单 key 打满）
+    pub direct_quota: Arc<crate::prod_guard::RateLimiter>,
     pub breaker: Arc<crate::prod_guard::CircuitBreaker>,
     pub metrics: Arc<crate::prod_guard::Metrics>,
 }
@@ -133,7 +135,18 @@ async fn handle_dashboard(State(state): State<AppState>, headers: HeaderMap) -> 
             keys.push(k.clone());
         }
     }
-    let keys_json = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into());
+    // 默认配置（api_keys 为空）下面板首次打开会给所有数据端点 401：
+    // 这里生成一次性会话级 key 注入前端，配合 check_api_key 的放行语义（空=本机模式）一起自愈
+    if keys.is_empty() && state.cfg.api_keys.is_empty() {
+        let session_key = format!("sk-to-session-{}", uuid::Uuid::new_v4().simple());
+        if let Ok(mut w) = state.api_keys.write() {
+            w.push(session_key.clone());
+            keys.push(session_key);
+        }
+    }
+    // 注入数量上限：只暴露前 N 个（防 key 过多时整页 HTML 膨胀/泄漏面）
+    let keys_json = serde_json::to_string(&keys.iter().take(64).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".into());
     let html = crate::web::INDEX_HTML.replace("__API_KEYS_JSON__", &keys_json);
     Html(html).into_response()
 }
@@ -149,7 +162,10 @@ async fn handle_healthz(State(state): State<AppState>) -> Json<serde_json::Value
 
 // ---------- 生产保护 helper ----------
 
-async fn handle_metrics(State(state): State<AppState>) -> Response {
+async fn handle_metrics(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        return api_err_response(e);
+    }
     let pool_size = state.pool.len().await;
     let snap = state.pool.snapshot(state.cfg.hourly_per_ip).await;
     let available = snap["available"].as_u64().unwrap_or(0) as usize;
@@ -213,12 +229,16 @@ fn log_request(
     detail: Option<&str>,
     elapsed: std::time::Duration,
 ) {
+    // 脱敏按 char 处理（不能用字节切片：多字节 key 会 panic）
     let masked = key
         .map(|k| {
-            if k.len() <= 8 {
+            let chars: Vec<char> = k.chars().collect();
+            if chars.len() <= 8 {
                 "***".to_string()
             } else {
-                format!("{}***{}", &k[..4], &k[k.len() - 4..])
+                let head: String = chars[..4].iter().collect();
+                let tail: String = chars[chars.len() - 4..].iter().collect();
+                format!("{head}***{tail}")
             }
         })
         .unwrap_or_else(|| "-".to_string());
@@ -400,16 +420,20 @@ fn truncate_upstream_messages(msgs: &mut Vec<UpstreamMessage>, max_chars: usize)
     let mut drop_up_to = 0usize;
     let mut acc = 0usize;
     let count = msgs.len();
+    let mut any_oversize = false;
     for (i, m) in msgs.iter().enumerate() {
         let n = msg_len(m);
+        if n > max_chars {
+            any_oversize = true;
+        }
         if acc + n > max_chars {
             drop_up_to = i;
             break;
         }
         acc += n;
     }
-    // 如果只有最后一条也要丢（说明单条超长），直接硬截断该条
-    if drop_up_to >= count.saturating_sub(1) {
+    // 单条超长（含首条超长但后面还有消息的情况）：直接硬截断该条，避免 413
+    if any_oversize || drop_up_to >= count.saturating_sub(1) {
         // 单条/近尾部超长：保留最近 1/2 并硬截断每条文本
         let keep = (msgs.len() / 2).max(1);
         let keep_start = msgs.len() - keep;
@@ -804,6 +828,28 @@ async fn handle_chat_completions(
                 SseResponse { body }.into_response()
             } else {
                 let nr = collect_nonstream(up).await;
+                if let Some(em) = nr.upstream_error.as_deref() {
+                    state
+                        .metrics
+                        .record_request("v1_chat_completions", "openai", "5xx");
+                    state.metrics.record_upstream_error("upstream_error_event");
+                    state
+                        .metrics
+                        .observe_duration(start.elapsed().as_secs_f64());
+                    log_request(
+                        state.cfg.redact_logs,
+                        "v1_chat_completions",
+                        request_key(&headers).as_deref(),
+                        &model,
+                        false,
+                        "502",
+                        Some(em),
+                        start.elapsed(),
+                    );
+                    return api_err_response(ApiError::upstream(format!(
+                        "上游返回错误事件（可能被限流或模型不可用）: {em}"
+                    )));
+                }
                 log_request(
                     state.cfg.redact_logs,
                     "v1_chat_completions",
@@ -952,8 +998,14 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
             }
         }
     }
-    // 直连兜底
+    // 直连兜底（受专用配额约束：匿名上游每小时约 20 次，全局共享防打满）
     if state.cfg.direct_fallback {
+        if let Err(retry) = state.direct_quota.check("__global_direct__") {
+            return Err(ApiError::rate_limited(format!(
+                "直连兜底配额已用尽（每窗口 {} 次），请稍后重试或配置更多代理：retry_after={retry}s",
+                state.cfg.direct_fallback_quota
+            )));
+        }
         match state.client.stream(req, None).await {
             Ok(resp) => {
                 tracing::debug!("PROXY_OK attempt=direct model={} proxy=direct", req.model);
@@ -998,6 +1050,8 @@ pub struct NonstreamResult {
     pub text: String,
     pub reasoning: String,
     pub usage: Option<serde_json::Value>,
+    /// 上游流内是否出现 error 事件（应转为 HTTP 错误而非假成功）
+    pub upstream_error: Option<String>,
 }
 
 fn tokens_from_metadata(meta: &serde_json::Value) -> Option<serde_json::Value> {
@@ -1027,6 +1081,7 @@ async fn collect_nonstream(up: reqwest::Response) -> NonstreamResult {
     let mut text = String::new();
     let mut reasoning = String::new();
     let mut usage: Option<serde_json::Value> = None;
+    let mut upstream_error: Option<String> = None;
     loop {
         line.clear();
         use tokio::io::AsyncBufReadExt;
@@ -1053,7 +1108,15 @@ async fn collect_nonstream(up: reqwest::Response) -> NonstreamResult {
                         }
                         break;
                     }
-                    "error" => break,
+                    "error" => {
+                        let em = v
+                            .get("errorText")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("上游流错误")
+                            .to_string();
+                        upstream_error = Some(em);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -1063,6 +1126,7 @@ async fn collect_nonstream(up: reqwest::Response) -> NonstreamResult {
         text,
         reasoning,
         usage,
+        upstream_error,
     }
 }
 
@@ -1281,8 +1345,9 @@ async fn handle_claude_messages(
             url: None,
         }];
         if m.role == "user" {
-            for img in anthropic_image_parts(&body.messages) {
-                parts.push(img.clone());
+            // 只取当前消息自己的图片（不能扫描全会话：否则每个 user 消息都会拿到全部图片）
+            for img in anthropic_image_parts(std::slice::from_ref(m)) {
+                parts.push(img);
             }
         }
         up_msgs.push(UpstreamMessage {
@@ -1308,6 +1373,8 @@ async fn handle_claude_messages(
             );
         }
     }
+    // 与 OpenAI 路径一致：长对话做上游长度截断，避免 413
+    truncate_upstream_messages(&mut up_msgs, 16_000);
     let req = StreamRequest {
         msg_type: None,
         id: format!("chat-{}", uuid::Uuid::new_v4().simple()),
@@ -1352,6 +1419,28 @@ async fn handle_claude_messages(
                 .into_response();
             }
             let nr = collect_nonstream(up).await;
+            if let Some(em) = nr.upstream_error.as_deref() {
+                state
+                    .metrics
+                    .record_request("v1_messages", "anthropic", "5xx");
+                state.metrics.record_upstream_error("upstream_error_event");
+                state
+                    .metrics
+                    .observe_duration(start.elapsed().as_secs_f64());
+                log_request(
+                    state.cfg.redact_logs,
+                    "v1_messages",
+                    request_key(&headers).as_deref(),
+                    &model,
+                    false,
+                    "502",
+                    Some(em),
+                    start.elapsed(),
+                );
+                return api_err_response_anthropic(ApiError::upstream(format!(
+                    "上游返回错误事件（可能被限流或模型不可用）: {em}"
+                )));
+            }
             let mut content: Vec<serde_json::Value> = Vec::new();
             if !nr.reasoning.is_empty() {
                 content.push(json!({ "type": "thinking", "thinking": nr.reasoning }));
@@ -1534,6 +1623,28 @@ async fn handle_responses(
                     .unwrap();
             }
             let nr = collect_nonstream(up).await;
+            if let Some(em) = nr.upstream_error.as_deref() {
+                state
+                    .metrics
+                    .record_request("v1_responses", "openai", "5xx");
+                state.metrics.record_upstream_error("upstream_error_event");
+                state
+                    .metrics
+                    .observe_duration(start.elapsed().as_secs_f64());
+                log_request(
+                    state.cfg.redact_logs,
+                    "v1_responses",
+                    request_key(&headers).as_deref(),
+                    &model,
+                    false,
+                    "502",
+                    Some(em),
+                    start.elapsed(),
+                );
+                return api_err_response(ApiError::upstream(format!(
+                    "上游返回错误事件（可能被限流或模型不可用）: {em}"
+                )));
+            }
             let tc = crate::protocol::openai_sse::detect_tool_call(&nr.text);
             let body = crate::protocol::responses::completed_response(
                 &resp_id,
@@ -1636,23 +1747,30 @@ pub struct ApiKeyAction {
     pub action: String,
     #[serde(default)]
     pub key: Option<String>,
+    /// 高风险操作（clear）的二次确认：必须显式 true
+    #[serde(default)]
+    pub admin_confirm: Option<bool>,
 }
-
 async fn handle_config_api_key(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ApiKeyAction>,
 ) -> Response {
-    // 安全：管理 key 必须携带一个有效 key（防止公网任意生成/清空 key 关闭鉴权）
+    // 安全：管理操作必须携带一个有效 key（防止公网任意生成/清空 key 关闭鉴权）
     if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
         return api_err_response(e);
     }
-    // clear/set 属于高风险操作：要求带有效 key 且 action=clear 需额外确认（调用方来自面板已带 key）
     let Ok(mut keys) = state.api_keys.write() else {
         return api_err_response(ApiError::internal("锁错误"));
     };
     match body.action.as_str() {
         "generate" => {
+            // 防滥用：动态 key 数量上限（避免无限自增 + 限流 map 无界）
+            if keys.len() >= 64 {
+                return api_err_response(ApiError::bad_request(
+                    "动态 key 已达上限（64），请先删除/清空专用 key",
+                ));
+            }
             let key = format!("sk-to-{}", uuid::Uuid::new_v4().simple());
             keys.push(key.clone());
             Json(json!({ "ok": true, "key": key })).into_response()
@@ -1668,8 +1786,20 @@ async fn handle_config_api_key(
             Json(json!({ "ok": true, "key": k })).into_response()
         }
         "clear" => {
+            // 高风险：清空会关闭鉴权（回到空 key 放行模式），必须显式二次确认，
+            // 且当 config.json 配置了 api_keys 时不允许通过动态接口清空静态 key（防自锁）
+            if !state.cfg.api_keys.is_empty() {
+                return api_err_response(ApiError::bad_request(
+                    "config.json 已配置静态 api_keys，禁止动态清空（防误关闭鉴权）",
+                ));
+            }
+            if body.admin_confirm != Some(true) {
+                return api_err_response(ApiError::bad_request(
+                    "清空全部动态 key 将导致服务回到无鉴权状态；确认请输入 admin_confirm:true",
+                ));
+            }
             keys.clear();
-            Json(json!({ "ok": true })).into_response()
+            Json(json!({ "ok": true, "cleared": true })).into_response()
         }
         _ => api_err_response(ApiError::bad_request("action 必须为 generate/set/clear")),
     }

@@ -113,10 +113,17 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let limiter = Arc::new(tryingopen2api::prod_guard::RateLimiter::new(
+    let limiter = Arc::new(tryingopen2api::prod_guard::RateLimiter::with_max_keys(
         cfg.rate_limit_enabled,
         cfg.rate_limit_requests,
         cfg.rate_limit_window_sec,
+        cfg.rate_limit_max_keys,
+    ));
+    // 直连兜底配额（每窗口，仅当 direct_fallback 开启时启用）
+    let direct_quota = Arc::new(tryingopen2api::prod_guard::RateLimiter::new(
+        cfg.direct_fallback && cfg.direct_fallback_quota > 0,
+        cfg.direct_fallback_quota.max(1),
+        3600,
     ));
     let breaker = Arc::new(tryingopen2api::prod_guard::CircuitBreaker::new(
         cfg.circuit_breaker_enabled,
@@ -133,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
         sessions,
         api_keys,
         limiter,
+        direct_quota,
         breaker,
         metrics,
     };

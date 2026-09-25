@@ -96,6 +96,18 @@ pub struct Config {
     /// Prometheus /metrics 端点开关（默认开）
     #[serde(default = "default_true")]
     pub metrics_enabled: bool,
+    /// 限流 map 最大条目数（防唯一 key 制造无界内存）
+    #[serde(default = "default_max_rate_keys")]
+    pub rate_limit_max_keys: usize,
+    /// 直连兜底每窗口配额（避免匿名上游「每小时约 20 次」被共享打满）
+    #[serde(default = "default_direct_quota")]
+    pub direct_fallback_quota: u64,
+}
+fn default_max_rate_keys() -> usize {
+    4096
+}
+fn default_direct_quota() -> u64 {
+    10
 }
 fn default_rate_limit_requests() -> u64 {
     60
@@ -193,6 +205,8 @@ impl Default for Config {
             cb_failure_threshold: default_cb_failure_threshold(),
             cb_timeout_sec: default_cb_timeout_sec(),
             metrics_enabled: default_true(),
+            rate_limit_max_keys: default_max_rate_keys(),
+            direct_fallback_quota: default_direct_quota(),
             redact_logs: default_true(),
         }
     }
@@ -286,6 +300,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("METRICS_ENABLED") {
             cfg.metrics_enabled = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
+        }
+        if let Ok(v) = std::env::var("RATE_LIMIT_MAX_KEYS") {
+            cfg.rate_limit_max_keys = v.parse().unwrap_or(cfg.rate_limit_max_keys);
+        }
+        if let Ok(v) = std::env::var("DIRECT_FALLBACK_QUOTA") {
+            cfg.direct_fallback_quota = v.parse().unwrap_or(cfg.direct_fallback_quota);
         }
         Ok(cfg)
     }
