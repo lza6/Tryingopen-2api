@@ -1,3 +1,10 @@
+## 0.1.12 (2026-09-26) — 终局第 4 轮收尾（缺口清零 + truncate bug 修复）
+
+- fix: truncate_upstream_messages「保留最近 1/2」方向反了（截断后丢弃截断目标、保留超长旧消息）→ 改为保留最近并丢弃更旧
+- chore: 移除 rusqlite 死依赖与 sqlite_path/telemetry_path/proxies_path/precheck_concurrency 死配置（纯 Rust、构建更快）
+- docs: Dockerfile/compose/DOCKER.md 清 sqlite 残留；限流口径统一「每 24h UTC 日约 20 次」；台账/工作流状态同步 v0.1.12
+- test: 新增 7 测试（session sweep / config env / truncate 三分支）→ 46 → 53
+
 ## 0.1.11 (2026-09-26) — 终局闭环第 4 轮（安全/协议/前端/发布）
 
 - 安全：日志脱敏按 char（修多字节 key panic DoS）；clear 需二次确认；/metrics 加鉴权；直连兜底配额；限流 map 上限
