@@ -1,7 +1,7 @@
 //! 模型注册表：TryingOpen 静态目录（12 个开源模型）+ 上游首页 chunk 动态刷新
 //!
 //! 数据来源（2026-09-24 抓包 https://www.tryingopen.com HAR + 07cl9ce_x7idy.js）：
-//! 全站完全匿名（无需 Cookie）；按「每 IP 每小时约 20 次」限流。
+//! 全站完全匿名（无需 Cookie）；按「每 IP 每日（24h UTC）约 20 次」限流。
 //! 上游请求 id 就是 `provider/model`（如 `qwen/qwen3.8-27b`）。
 
 use serde::{Deserialize, Serialize};

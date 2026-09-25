@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("TryingOpen2API v{} 启动", env!("CARGO_PKG_VERSION"));
     tracing::info!("监听 {}", listen_addr);
     tracing::info!(
-        "上游 {}（完全匿名，单 IP 每小时约 {} 次）",
+        "上游 {}（完全匿名，单 IP 每 24h UTC 日约 {} 次）",
         upstream,
         cfg.hourly_per_ip
     );

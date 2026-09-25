@@ -1,6 +1,6 @@
 //! TryingOpen2API — TryingOpen 免费模型 OpenAI/Anthropic 兼容 API 网关（Rust axum 版）
 //!
-//! 上游：https://www.tryingopen.com（完全匿名，单 IP 每小时约 20 次限流）
+//! 上游：https://www.tryingopen.com（完全匿名，单 IP 每 24h UTC 日约 20 次限流）
 //! 协议逆向来源：抓包数据包（源代码、网络数据包/www.tryingopen.com.har）+ 站点 JS chunk。
 //!
 //! 支持端点：

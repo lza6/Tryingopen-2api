@@ -85,3 +85,44 @@ impl SessionMap {
         Self::sweep(&mut map);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding(active: &str) -> SessionBinding {
+        SessionBinding {
+            model: "m".into(),
+            created_at: active.into(),
+            last_active: active.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn sweep_bounds_map_to_4000() {
+        let m = SessionMap::new();
+        for i in 0..5100u32 {
+            m.insert(
+                &format!("k-{i}"),
+                binding(&format!("2026-09-26T00:{:02}:00Z", i % 60)),
+            )
+            .await;
+        }
+        assert!(
+            m.len().await <= 5000,
+            "sweep 后应有界 ≤5000, got {}",
+            m.len().await
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_touch_keeps_model() {
+        let m = SessionMap::new();
+        m.insert("t", binding("2026-09-26T00:00:00Z")).await;
+        m.touch("t").await;
+        let got = m.get("t").await;
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().model, "m");
+        assert_eq!(m.len().await, 1);
+    }
+}

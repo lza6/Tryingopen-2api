@@ -304,7 +304,7 @@ async function loadGuide() {
     const g = await j('/api/guide');
     const base = g.base_url || (location.protocol + '//' + location.host + '/v1');
     const anthBase = base.replace(/\/v1$/, '');
-    const key = (Array.isArray(API_KEYS) && API_KEYS.length > 0) ? API_KEYS[0] : (g.api_keys_configured ? '<需要有效 key>' : 'sk-local（未配置 api_keys 时任意）');
+    const key = (Array.isArray(API_KEYS) && API_KEYS.length > 0) ? API_KEYS[0] : (g.api_keys_configured ? '<需要有效 key>' : '面板已自动注入（空配置时生成会话级 key）');
     const models = (g.models && g.models.length) ? g.models.join('、') : '（目录为空，点击同步）';
     live.innerHTML = `监听: ${esc(g.listen_addr || '-')}\nBase URL: ${esc(base)}\n模型数: ${esc(g.models ? g.models.length : '-')}（${esc(models)}）\n代理池: ${esc(g.proxy_count ?? '-')}\n上游: ${esc(g.upstream || '-')}\n密钥已配置: ${esc(g.api_keys_configured ? '是' : '否（建议先配置）')}`;
     oa.innerHTML = `Base URL: ${esc(base)}\nAPI Key: ${esc(key)}\n模型: ${esc(models)}`;

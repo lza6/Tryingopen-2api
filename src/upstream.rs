@@ -1,7 +1,7 @@
 //! 上游 TryingOpen HTTP 客户端
 //!
 //! 逆向自抓包数据包（www.tryingopen.com.har）+ 站点 JS chunk：
-//! - POST /api/open                匿名对话 SSE（无 Cookie；单 IP 每小时约 20 次）
+//! - POST /api/open                匿名对话 SSE（无 Cookie；单 IP 每 24h UTC 日约 20 次）
 //! - GET  /                        首页 HTML（含 /_next/static/chunks/*.js 引用）
 //! - GET  /_next/static/chunks/*.js 模型目录（{id,name,context,supportsTools,supportsImages,pricePerMTok,...}）
 //!

@@ -455,7 +455,8 @@ fn truncate_upstream_messages(msgs: &mut Vec<UpstreamMessage>, max_chars: usize)
             }
         }
         if msgs.len() > keep {
-            msgs.truncate(keep);
+            // 保留「最近 keep 条」（已截断），丢弃更旧的消息（不变量：不能截断后又删掉截断目标）
+            msgs.drain(0..keep_start);
             msgs.insert(
                 0,
                 UpstreamMessage {
@@ -998,7 +999,7 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
             }
         }
     }
-    // 直连兜底（受专用配额约束：匿名上游每小时约 20 次，全局共享防打满）
+    // 直连兜底（受专用配额约束：匿名上游每 24h UTC 日约 20 次，全局共享防打满）
     if state.cfg.direct_fallback {
         if let Err(retry) = state.direct_quota.check("__global_direct__") {
             return Err(ApiError::rate_limited(format!(
@@ -1034,7 +1035,7 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
     let detail = last_err.unwrap_or_else(|| "全部出口失败".into());
     if detail.starts_with("upstream-429") {
         Err(ApiError::rate_limited(format!(
-            "TryingOpen 全部出口限流中（每 IP 每小时约 {} 次）：{}",
+            "TryingOpen 全部出口限流中（每 IP 每 24h UTC 日约 {} 次）：{}",
             state.cfg.hourly_per_ip, detail
         )))
     } else {
@@ -1738,7 +1739,7 @@ async fn handle_guide(State(state): State<AppState>, headers: HeaderMap) -> Resp
         "proxy_count": state.pool.len().await,
         "base_url": format!("http://{}/v1", state.cfg.listen_addr),
         "upstream": state.cfg.upstream_base_url,
-        "note": "完全匿名：无需 Cookie/Domain/Key（每 IP 每小时约 20 次，代理池自动轮换）"
+        "note": "完全匿名：无需 Cookie/Domain/Key（每 24h UTC 日约 20 次，代理池自动轮换）"
     })).into_response()
 }
 
@@ -1815,4 +1816,69 @@ fn api_err_response(e: ApiError) -> Response {
 fn api_err_response_anthropic(e: ApiError) -> Response {
     let status = e.status();
     (status, e.anthropic_json()).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::upstream::{MessagePart, UpstreamMessage};
+
+    fn msg(role: &str, text: &str) -> UpstreamMessage {
+        UpstreamMessage {
+            id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
+            role: role.into(),
+            parts: vec![MessagePart {
+                part_type: "text".into(),
+                text: Some(text.into()),
+                media_type: None,
+                url: None,
+            }],
+            metadata: None,
+        }
+    }
+
+    fn total_len(msgs: &[UpstreamMessage]) -> usize {
+        msgs.iter()
+            .flat_map(|m| m.parts.iter())
+            .map(|p| p.text.as_deref().unwrap_or("").chars().count())
+            .sum()
+    }
+
+    #[test]
+    fn truncate_first_message_oversize() {
+        // 首条单条超长 + 后面还有消息：必须硬截断而非不处理
+        let mut msgs = vec![
+            msg("user", &"长".repeat(20_000)),
+            msg("assistant", "短回复"),
+        ];
+        truncate_upstream_messages(&mut msgs, 16_000);
+        assert!(total_len(&msgs) < 20_000, "超长应被截断到预算内");
+        assert!(
+            msgs.iter().flat_map(|m| m.parts.iter()).any(|p| p
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .contains("已截断")),
+            "应含截断标记"
+        );
+    }
+
+    #[test]
+    fn truncate_keeps_recent_when_over_budget() {
+        // 整体超预算：丢最旧保留最近
+        let mut msgs = vec![msg("user", "旧"), msg("assistant", "中"), msg("user", "新")];
+        truncate_upstream_messages(&mut msgs, 100);
+        assert!(total_len(&msgs) <= 100 + 200, "总长应受约束（含截断提示）");
+        assert!(msgs
+            .iter()
+            .any(|m| m.parts[0].text.as_deref().unwrap_or("").contains("新")));
+    }
+
+    #[test]
+    fn truncate_noop_when_within_budget() {
+        let mut msgs = vec![msg("user", "hi"), msg("assistant", "hello")];
+        truncate_upstream_messages(&mut msgs, 16_000);
+        assert_eq!(total_len(&msgs), 7);
+        assert_eq!(msgs.len(), 2);
+    }
 }

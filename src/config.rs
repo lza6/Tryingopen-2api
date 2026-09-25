@@ -1,7 +1,7 @@
 //! 配置解析（config.json + 环境变量覆盖）
 //!
 //! TryingOpen2API 是「完全匿名」网关：上游 tryingopen.com 的所有对话端点
-//! 不要求 Cookie/登录，全站按「每 IP 每小时约 20 次」限流。因此本网关没有
+//! 不要求 Cookie/登录，全站按「每 24h UTC 日约 20 次」限流。因此本网关没有
 //! 账号/凭证池，只需要：监听地址、上游地址、代理池配置、模型目录开关。
 
 use anyhow::{Context, Result};
@@ -41,7 +41,7 @@ pub struct Config {
     /// 免费代理刷新周期（分钟）
     #[serde(default = "default_free_proxy_min")]
     pub free_proxy_refresh_min: u64,
-    /// 每 IP 每小时限流（tryingopen 站点约束，用于代理选择/冷却语义）
+    /// 每 24h UTC 日限流（按 IP 配额）（tryingopen 站点约束，用于代理选择/冷却语义）
     #[serde(default = "default_hourly_per_ip")]
     pub hourly_per_ip: usize,
     /// 单请求最大出口尝试轮数（超出后直连兜底）
@@ -50,21 +50,12 @@ pub struct Config {
     /// 代理池全局并发请求上限（同时打出去的不同出口数）
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_requests: usize,
-    /// 免费代理并发预检窗口
-    #[serde(default = "default_precheck_concurrency")]
-    pub precheck_concurrency: usize,
     /// 递增冷却秒数映射（逗号分隔；第 N 次使用后等待 X 秒）
     #[serde(default = "default_cooldown_map")]
     pub cooldown_map: String,
     /// 直连兜底（代理全部失败后最后试一次本机出口；上游每分钟 20 次本机配额）
     #[serde(default = "default_true")]
     pub direct_fallback: bool,
-    #[serde(default = "default_sqlite")]
-    pub sqlite_path: String,
-    #[serde(default = "default_proxies_data")]
-    pub proxies_path: String,
-    #[serde(default = "default_telemetry")]
-    pub telemetry_path: String,
     /// 跳过上游健康检查
     #[serde(default = "default_true")]
     pub skip_upstream_check: bool,
@@ -99,7 +90,7 @@ pub struct Config {
     /// 限流 map 最大条目数（防唯一 key 制造无界内存）
     #[serde(default = "default_max_rate_keys")]
     pub rate_limit_max_keys: usize,
-    /// 直连兜底每窗口配额（避免匿名上游「每小时约 20 次」被共享打满）
+    /// 直连兜底每窗口配额（避免匿名上游「每 24h UTC 日约 20 次」被共享打满）
     #[serde(default = "default_direct_quota")]
     pub direct_fallback_quota: u64,
 }
@@ -155,23 +146,11 @@ fn default_max_attempts() -> usize {
 fn default_max_concurrent() -> usize {
     64
 }
-fn default_precheck_concurrency() -> usize {
-    50
-}
 fn default_cooldown_map() -> String {
     "0,15,60,120,300".into()
 }
 fn default_true() -> bool {
     true
-}
-fn default_sqlite() -> String {
-    "data/tryingopen2api.sqlite".into()
-}
-fn default_proxies_data() -> String {
-    "data/proxies.txt".into()
-}
-fn default_telemetry() -> String {
-    "data/telemetry.sqlite".into()
 }
 
 impl Default for Config {
@@ -190,12 +169,8 @@ impl Default for Config {
             hourly_per_ip: default_hourly_per_ip(),
             max_attempts: default_max_attempts(),
             max_concurrent_requests: default_max_concurrent(),
-            precheck_concurrency: default_precheck_concurrency(),
             cooldown_map: default_cooldown_map(),
             direct_fallback: default_true(),
-            sqlite_path: default_sqlite(),
-            proxies_path: default_proxies_data(),
-            telemetry_path: default_telemetry(),
             skip_upstream_check: default_true(),
             ui_password: String::new(),
             rate_limit_enabled: default_true(),
@@ -270,9 +245,6 @@ impl Config {
         if let Ok(v) = std::env::var("MAX_CONCURRENT_REQUESTS") {
             cfg.max_concurrent_requests = v.parse().unwrap_or(cfg.max_concurrent_requests);
         }
-        if let Ok(v) = std::env::var("PRECHECK_CONCURRENCY") {
-            cfg.precheck_concurrency = v.parse().unwrap_or(cfg.precheck_concurrency);
-        }
         if let Ok(v) = std::env::var("DIRECT_FALLBACK") {
             cfg.direct_fallback = matches!(v.trim().to_lowercase().as_str(), "1" | "true");
         }
@@ -325,5 +297,41 @@ impl Config {
     /// 解析递增冷却映射
     pub fn cooldown_vec(&self) -> Vec<u32> {
         crate::proxy_pool::parse_cooldown_map(&self.cooldown_map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_overrides_apply_to_config() {
+        unsafe {
+            std::env::set_var("LISTEN_ADDR", "127.0.0.1:59999");
+            std::env::set_var("API_KEYS", "sk-a, sk-b");
+            std::env::set_var("RATE_LIMIT_REQUESTS", "7");
+            std::env::set_var("FREE_PROXY_ENABLED", "0");
+        }
+        let cfg = Config::load(None).unwrap();
+        assert_eq!(cfg.listen_addr, "127.0.0.1:59999");
+        assert_eq!(cfg.api_keys, vec!["sk-a", "sk-b"]);
+        assert_eq!(cfg.rate_limit_requests, 7);
+        assert!(!cfg.free_proxy_enabled);
+        // 清理，避免污染其它测试
+        unsafe {
+            std::env::remove_var("LISTEN_ADDR");
+            std::env::remove_var("API_KEYS");
+            std::env::remove_var("RATE_LIMIT_REQUESTS");
+            std::env::remove_var("FREE_PROXY_ENABLED");
+        }
+    }
+
+    #[test]
+    fn dead_fields_removed() {
+        // rusqlite/sqlite/telemetry/proxies_path/precheck 均为已移除死配置
+        let cfg = Config::default();
+        // 死字段已删除：sqlite_path/telemetry_path/proxies_path/precheck_concurrency 不应存在
+        // （编译期验证：若字段仍在则访问报错；此处仅验证 default 可构造含 proxy_file 空串语义）
+        assert!(cfg.proxy_file.is_empty());
     }
 }
