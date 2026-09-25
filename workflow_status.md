@@ -1,7 +1,7 @@
 # Workflow Status — TryingOpen2API 终局闭环总审计
 
 > 更新：2026-09-24（终局闭环）
-> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.1，CI 全绿）
+> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.6+，CI 全绿）
 
 ## 产品定位
 TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
@@ -11,7 +11,7 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 
 | 节点 | 内容 | 状态 | 验收证据 |
 |---|---|---|---|
-| N1 | 架构/代码审计 | ✅ 完成 | 8 个真实缺陷全修复，fmt/clippy/25tests 绿，CI 全绿 |
+| N1 | 架构/代码审计 | ✅ 完成 | 8 个真实缺陷全修复 + 终局审计 10 项新修复，fmt/clippy/37tests 绿，CI 全绿 |
 | N2 | API 契约文档 | ✅ 完成 | docs/API_CONTRACT.md（认证/错误/端点/防坑） |
 | N3 | 性能压测 | ✅ 完成 | docs/audit/N3（真实数据：并发 5 全成功、无崩溃） |
 | N4 | 安全审计 | ✅ 完成 | cargo audit 0 漏洞 + SSRF 纵深防护修复 |
@@ -33,7 +33,7 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 10. 请求体无限制 → DefaultBodyLimit 16MB
 
 ## 验证记录（防重复）
-- [x] 门禁：fmt/clippy/25tests（每次改动后复跑）
+- [x] 门禁：fmt/clippy/37tests（每次改动后复跑）
 - [x] CI：main push 全绿（35962399309 等）
 - [x] E2E：对话/工具/多模态/容量/Anthropic message_start/无效模型降级
 - [x] 依赖：cargo audit 0 漏洞
@@ -57,9 +57,25 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 | P6 | 真实验收（公网限流/熔断/metrics） | ✅ 完成 | 公网直连全链路：healthz/UI/models/chat/Anthropic/429/503/metrics/4500代理 |
 
 ## 验证记录（防重复）
-- [x] 门禁 fmt/clippy/33tests（每次改动复跑，含 prod_guard 8 项）
+- [x] 门禁 fmt/clippy/37tests（每次改动复跑，含 prod_guard + upstream 识别单测）
 - [x] CI main push 全绿
 - [x] 公网 E2E：healthz 200 / UI 401+200 / API key 对话 200 / /metrics
 - [x] 服务器 systemd 双服务（主 + cf 隧道）
 - [x] 公网直连 47831 已确认放行（curl --noproxy "*" 200）
 - 本轮改动后复跑：门禁 + 公网限流/熔断/metrics 实测
+
+
+## 终局闭环总审计（2026-09-25 第二轮，多 agent 并行 + 真实验收）
+
+| 节点 | 内容 | 状态 | 验收证据 |
+|---|---|---|---|
+| F1 | /api/config/api-key 鉴权漏洞 | ✅ 修复 | 原无鉴权可远程清空 key；现必须带有效 key 才能管理 |
+| F2 | 非流式工具调用假功能 | ✅ 修复 | collect_nonstream 检测 tool_call → 标准 tool_calls + finish_reason:tool_calls |
+| F3 | /v1/models 缺 meta 字段 | ✅ 修复 | 补 tools/vision/context/price/label，UI 模型表真实渲染（去 TODO 假徽章） |
+| F4 | fallback_models 死配置 | ✅ 修复 | resolve 读 config.fallback_models（空则内置默认），+测试 |
+| F5 | 熔断误计 4xx | ✅ 修复 | 仅 5xx 记熔断失败；模型不存在不再误熔断整个上游 |
+| F6 | Anthropic tool_choice 缺失 | ✅ 修复 | 新增 tool_choice 字段 + 注入系统提示 |
+| F7 | Anthropic partial_json 非法分块 | ✅ 修复 | 一次发送完整合法 JSON arguments（Anthropic SDK 兼容） |
+| F8 | 文档过度声称 | ✅ 同步 | README/config.example/API_CONTRACT 修正：每日限流语义、44源/4500截断、free_proxy 默认 true、非流工具调用说明 |
+| F9 | 生产凭据泄漏 git 历史 | ⚠️ 需用户确认 | docs/SERVER_DEPLOYMENT.md 已脱敏为占位符；历史重写（filter-repo/BFG）需用户授权 |
+| F10 | /metrics + /healthz 鉴权 | 🟡 待定 | 生产可考虑限内网或加 key（当前 healthz 无敏感字段，metrics 暴露规模） |

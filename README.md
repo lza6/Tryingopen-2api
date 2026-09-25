@@ -4,9 +4,9 @@
 
 TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开源模型（13+）逆向为 **OpenAI 兼容**与 **Anthropic 兼容** 的本地 API 网关。单二进制、零外部依赖，可在任意 OpenAI/Claude 客户端（Claude Code、Codex、Cursor、LobeChat、NextChat 等）中使用 TryingOpen 免费模型。
 
-**完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每小时约 20 次」限流，网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
+**完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每日约 20 次」限流（代理池轮换出口缓解），网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.1 增强**：代理池 44 源（实测 4500+ 代理）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.1 增强**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -33,13 +33,13 @@ cargo build --release
 {
   "proxy_file": "data/proxies.txt",        // 住宅/自备代理，每行 http://user:pass@host:port
   "free_proxy_enabled": true,              // 开启免费代理抓取（默认 true，44 源）
-  "hourly_per_ip": 20,                     // tryingopen 单 IP 每小时限流
+  "hourly_per_ip": 20,                     // tryingopen 单 IP 每日限流
   "max_attempts": 3,                       // 每请求最多换几个出口
   "direct_fallback": true                  // 全部代理失败后直连兜底
 }
 ```
 
-不配代理也能直接用（本机 IP 每小时 20 次额度）。
+不配代理也能直接用（本机 IP 每日 20 次额度）。
 
 ### 第 3 步：接入客户端
 
@@ -118,7 +118,7 @@ API Key:  sk-local（或面板生成）
 - **每 IP 限流语义**：按 `hourly_per_ip`（默认 20）控制每个出口的使用次数；24h 窗口重置
 - **故障轮换**：429 / 网络错误 → `mark_failure` 冷却该出口 + 健康分 EWMA 下调 + 指数退避（2s/4s/8s）→ 下一轮换新出口
 - **优先策略**：24h 内未用过的 IP 优先；全部用过一轮后按健康分 + 冷却最早结束排序
-- **直连兜底**：`max_attempts` 轮代理全部失败后直连本机 IP 一次（本机也有每小时 20 次配额）
+- **直连兜底**：`max_attempts` 轮代理全部失败后直连本机 IP 一次（本机也有每日 20 次配额）
 - **脱敏**：面板/API 只暴露 `host:port`，不泄漏住宅代理 `user:pass`
 - **粘滞**：同下游会话优先复用同出口（300s 窗口），避免触发上游 IP 跳变风控
 
@@ -165,9 +165,9 @@ TryingOpen 站点（Next.js + Turbopack，完全匿名）：
 | `request_timeout_sec` | `120` | 请求超时 |
 | `catalog_refresh_min` | `30` | 目录刷新周期 |
 | `proxy_file` | `data/proxies.txt` | 住宅代理文件 |
-| `free_proxy_enabled` | `false` | 免费代理抓取开关 |
+| `free_proxy_enabled` | `true` | 免费代理抓取开关（默认开，44 源） |
 | `free_proxy_refresh_min` | `30` | 免费代理刷新周期 |
-| `hourly_per_ip` | `20` | 每 IP 每小时限流 |
+| `hourly_per_ip` | `20` | 每 IP 每日限流 |
 | `max_attempts` | `3` | 最大出口尝试轮数 |
 | `cooldown_map` | `0,15,60,120,300` | 递增冷却秒数 |
 | `direct_fallback` | `true` | 直连兜底 |
@@ -195,7 +195,7 @@ src/
 ├── models.rs        # 模型目录（12 静态 + 动态同步）+ 归一化/降级
 ├── upstream.rs      # TryingOpen HTTP 客户端（对话/目录抓取）
 ├── proxy_pool.rs    # 代理池（住宅+免费双源，冷却/轮换/健康分）
-├── free_proxy.rs    # 免费代理抓取器（13 源 + 公网 IP 过滤 + TCP 预检）
+├── free_proxy.rs    # 免费代理抓取器（44 源 + 公网 IP 过滤 + TCP 延迟预检）
 ├── session.rs       # 会话绑定（线程 ↔ 模型）
 ├── errors.rs        # OpenAI/Anthropic 兼容错误
 ├── web.rs           # 内置控制面板（单 HTML）

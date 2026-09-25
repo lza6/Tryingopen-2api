@@ -11,7 +11,7 @@
   "request_timeout_sec": 120,
   "catalog_refresh_min": 30,
   "proxy_file": "data/proxies.txt",
-  "free_proxy_enabled": false,
+  "free_proxy_enabled": true,
   "free_proxy_refresh_min": 30,
   "hourly_per_ip": 20,
   "max_attempts": 3,

@@ -7,8 +7,8 @@
 
 | 项 | 值 |
 |---|---|
-| 公网 IP | 20.204.27.154 |
-| SSH | root@20.204.27.154（用户提供密码） |
+| 公网 IP | <SERVER_IP> |
+| SSH | root@<SERVER_IP>（用户提供密码） |
 | 架构 | Ubuntu 22.04 ARM64 (aarch64)，2核 952MB |
 | 服务端口 | 47831（公网已放行，直连可用）；另有 Cloudflare Quick Tunnel 兜底 |
 | 服务方式 | systemd（tryingopen2api.service，restart=always） |
@@ -22,27 +22,27 @@
 
 ## 鉴权（生产已启用）
 
-- **API Key**：`sk-to-bqsprd1mg4f07i6uywz8le3ho5tj2anx`
+- **API Key**：`sk-to-<YOUR_API_KEY>`
   - OpenAI: `Authorization: Bearer <key>` 或 `x-api-key: <key>`
   - 无 key → 401
-- **Web UI 密码**：`qg9ozarmn1ikh5`（Basic Auth，用户名任意）
-  - 访问 `http://20.204.27.154:47831/ui` 弹出密码框
+- **Web UI 密码**：`<YOUR_UI_PASSWORD>`（Basic Auth，用户名任意）
+  - 访问 `http://<SERVER_IP>:47831/ui` 弹出密码框
   - 无密码 → 401
 - **healthz**：无鉴权（健康探活用）
 
 ## 接入地址（公网直连，已放行 47831）
 
-- API Base URL：`http://20.204.27.154:47831/v1`
+- API Base URL：`http://<SERVER_IP>:47831/v1`
 - OpenAI 端点：`POST /v1/chat/completions`
 - Anthropic 端点：`POST /v1/messages`
 - 模型列表：`GET /v1/models`
-- Web UI：`http://20.204.27.154:47831/ui`（密码 qg9ozarmn1ikh5）
-- healthz：`http://20.204.27.154:47831/healthz`
-- metrics：`http://20.204.27.154:47831/metrics`（Prometheus）
+- Web UI：`http://<SERVER_IP>:47831/ui`（密码 <YOUR_UI_PASSWORD>）
+- healthz：`http://<SERVER_IP>:47831/healthz`
+- metrics：`http://<SERVER_IP>:47831/metrics`（Prometheus）
 
 ## Azure NSG 放行状态（已确认放行 22 + 47831）
 
-> 2026-09-25 公网直连实测：`curl --noproxy "*" http://20.204.27.154:47831/healthz` 返回 200。
+> 2026-09-25 公网直连实测：`curl --noproxy "*" http://<SERVER_IP>:47831/healthz` 返回 200。
 > 注意：本机若设置了 HTTP_PROXY/HTTPS_PROXY（如 v2rayN 10808），curl 默认走代理可能得到 503，需 `--noproxy "*"`。
 
 Azure 门户 → 虚拟机 NewAPI02 → 网络 → 网络接口 NSG → 入站规则 → 添加：
@@ -81,7 +81,7 @@ curl http://127.0.0.1:47831/healthz    # 本机探活
 - [x] /v1/models 无 key 401、带 key 200
 - [x] 真实对话 E2E（公网直连）200，含 reasoning+usage
 - [x] Anthropic /v1/messages 公网 200（thinking+text+usage）
-- [x] 公网直连 47831 200（`curl --noproxy "*" http://20.204.27.154:47831/healthz`）
+- [x] 公网直连 47831 200（`curl --noproxy "*" http://<SERVER_IP>:47831/healthz`）
 - [x] 限流：阈值3 实测 req1-3=200，req4/5=429 + Retry-After
 - [x] 熔断：坏上游实测 502→503 熔断保护→恢复后 200
 - [x] /metrics 公网：requests_total/upstream_errors/proxy_pool_size/active_sessions
@@ -104,4 +104,4 @@ curl http://127.0.0.1:47831/healthz    # 本机探活
   journalctl -u tryingopen-cf-tunnel --no-pager | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | tail -1
   ```
 - 若需固定域名：Cloudflare 面板创建 Named Tunnel（需自有域名）+ `cloudflared tunnel route dns`，配置写入 `/etc/cloudflared/config.yml`
-- 若后续在 Azure 门户放行 47831，可直接用 `http://20.204.27.154:47831` 访问（无需隧道）
+- 若后续在 Azure 门户放行 47831，可直接用 `http://<SERVER_IP>:47831` 访问（无需隧道）
