@@ -79,3 +79,13 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 | F8 | 文档过度声称 | ✅ 同步 | README/config.example/API_CONTRACT 修正：每日限流语义、44源/4500截断、free_proxy 默认 true、非流工具调用说明 |
 | F9 | 生产凭据泄漏 git 历史 | ⚠️ 需用户确认 | docs/SERVER_DEPLOYMENT.md 已脱敏为占位符；历史重写（filter-repo/BFG）需用户授权 |
 | F10 | /metrics + /healthz 鉴权 | 🟡 待定 | 生产可考虑限内网或加 key（当前 healthz 无敏感字段，metrics 暴露规模） |
+
+
+## 终局闭环第三轮（2026-09-25，v0.1.9）
+
+| 节点 | 内容 | 状态 | 验收证据 |
+|---|---|---|---|
+| S1 | session map 无界增长 | ✅ 修复 | sweep 提取，ensure/touch 触发清理（>5000→4000） |
+| S2 | redact_logs 假配置 | ✅ 修复 | log_request 接入配置（true 截断+剥离密钥，false 完整） |
+| S3 | capacity 口径矛盾 | ✅ 修复 | 公网实测 used=31 ≤ total=90000 |
+| S4 | Dockerfile + CD 全自动部署 | ✅ 完成 | v0.1.8/v0.1.9 均由 push main 自动部署（3m39s/3m44s） |
