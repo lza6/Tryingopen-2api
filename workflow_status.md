@@ -89,3 +89,14 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 | S2 | redact_logs 假配置 | ✅ 修复 | log_request 接入配置（true 截断+剥离密钥，false 完整） |
 | S3 | capacity 口径矛盾 | ✅ 修复 | 公网实测 used=31 ≤ total=90000 |
 | S4 | Dockerfile + CD 全自动部署 | ✅ 完成 | v0.1.8/v0.1.9 均由 push main 自动部署（3m39s/3m44s） |
+
+
+## v0.1.10：OpenAI 工具调用修复 + /v1/responses（2026-09-25）
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| R1 | OpenAI chat 多轮工具往返（assistant.tool_calls + role=tool） | ✅ 修复，公网 200 |
+| R2 | 上游 HTTP 413 对话过长（截断历史 + 立即 400 不轮换） | ✅ 修复 |
+| R3 | /v1/responses 非流式（message / function_call） | ✅ 上线，公网 200 |
+| R4 | /v1/responses 流式事件链 completed 去重 | ✅ 修复，completed 恰好 1 次 |
+| R5 | 工具检测兼容 tool_call / function_call / tool_calls[] | ✅ 增强 |
