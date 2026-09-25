@@ -212,3 +212,36 @@ docs/
 └── ARCHITECTURE.md  # 架构说明
 ```
 
+
+## 生产部署 / 访问（2026-09-26）
+
+### 生产环境拓扑
+
+```
+客户端 → https://try.hwhcie.bond:443
+         → nginx (20.204.27.154, sites-enabled/tryingopen)
+         → http://127.0.0.1:47831 (tryingopen2api systemd, v0.1.10)
+```
+
+- 服务器：`20.204.27.154`（Azure Ubuntu 22.04，nginx 1.18 + systemd）
+- 域名：`try.hwhcie.bond`（Let's Encrypt 证书，SAN 含 try）
+- 同机还跑 imagefree：`imagefree/api/admin.hwhcie.bond` → `127.0.0.1:8100`
+- 完整 nginx 配置与排障见 `docs/NGINX_DEPLOY.md`
+
+### 生产访问
+
+| 用途 | 地址 |
+|---|---|
+| OpenAI 兼容 API | `https://try.hwhcie.bond/v1` |
+| Anthropic 兼容 | `https://try.hwhcie.bond/v1/messages` |
+| Web UI | `https://try.hwhcie.bond/ui` |
+| 健康检查 | `https://try.hwhcie.bond/healthz` |
+
+> 凭据（API Key / UI 密码）已轮换，不写在此；见服务器 `/opt/tryingopen2api/config.json`
+> 或部署者保管的密钥记录。
+
+### 部署流水线
+
+- push main → GitHub Actions CI（fmt/clippy/test/security）→ CD-Deploy 自动部署到服务器
+- CD 流程：打包源码 → paramiko 上传 → 服务器 cargo build --release（nice 低优先级）→ 停服替换重启 → healthz 验证
+- Secrets：`SSH_HOST` / `SSH_USER` / `SSH_PASS`
