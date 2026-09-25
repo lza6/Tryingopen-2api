@@ -194,6 +194,7 @@ pub struct StreamAccum {
     pub tool_args: String,
     pub tool_id: Option<String>,
     pub started: bool,
+    pub completed: bool,
 }
 
 impl StreamAccum {
@@ -219,6 +220,10 @@ impl StreamAccum {
         }
         let data = seg.trim().strip_prefix("data:").unwrap_or("").trim();
         if data == "[DONE]" {
+            if self.completed {
+                return String::new();
+            }
+            self.completed = true;
             let body = completed_response(
                 resp_id,
                 model,
@@ -366,5 +371,19 @@ mod tests {
         assert!(out2.contains("response.completed"));
         assert!(out2.contains("\"status\":\"completed\""));
         assert_eq!(acc.text, "hi");
+    }
+
+    #[test]
+    fn double_done_emits_completed_once() {
+        let mut acc = StreamAccum::default();
+        let f = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n";
+        let done =
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        acc.push(f, "r1", "m");
+        let a = acc.push(done, "r1", "m");
+        let b = acc.push(done, "r1", "m");
+        assert!(a.contains("response.completed"));
+        assert!(!b.contains("response.completed"));
+        assert_eq!(a.matches("event: response.completed").count(), 1);
     }
 }
