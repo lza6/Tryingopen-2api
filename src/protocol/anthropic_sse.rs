@@ -32,22 +32,24 @@ impl IntoResponse for AnthropicSseResponse {
 
 pub fn anthropic_events(
     upstream: reqwest::Response,
-    _model: &str,
+    model: &str,
     _session_id: &str,
     tool_mode: bool,
 ) -> impl Stream<Item = Result<String, ApiError>> {
     let reader = BufReader::new(crate::protocol::stream::reader_with_bytes(
         upstream.bytes_stream(),
     ));
-    anthropic_events_reader(Box::pin(reader), tool_mode)
+    anthropic_events_reader(Box::pin(reader), model, tool_mode)
 }
 
 pub fn anthropic_events_reader(
     reader: Pin<Box<dyn AsyncBufRead + Send>>,
+    model: &str,
     tool_mode: bool,
 ) -> impl Stream<Item = Result<String, ApiError>> {
     AnthropicTransform {
         reader,
+        model: model.to_string(),
         started: false,
         finished: false,
         pending_event: String::new(),
@@ -62,6 +64,7 @@ pub fn anthropic_events_reader(
 
 struct AnthropicTransform {
     reader: Pin<Box<dyn AsyncBufRead + Send>>,
+    model: String,
     started: bool,
     finished: bool,
     pending_event: String,
@@ -190,11 +193,13 @@ impl Stream for AnthropicTransform {
                                     .get("errorText")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("上游流错误");
-                                let frame = format!(
-                                    "event: content_block_delta\ndata: {}\n\n",
-                                    serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":format!("\n\n[上游错误: {msg}]")}})
-                                );
                                 self.finished = true;
+                                // 错误后必须发出终止事件（message_stop），否则客户端挂起等待
+                                let frame = format!(
+                                    "event: content_block_delta\ndata: {}\n\n{}",
+                                    serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":format!("\n\n[上游错误: {msg}]")}}),
+                                    self.stop_events()
+                                );
                                 return Poll::Ready(Some(Ok(frame)));
                             }
                             _ => continue,
@@ -220,7 +225,7 @@ impl AnthropicTransform {
                     "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
                     "type":"message",
                     "role":"assistant",
-                    "model":"",
+                    "model": self.model,
                     "content":[],
                     "stop_reason":null,
                     "stop_sequence":null,
@@ -410,7 +415,7 @@ mod tests {
     }
 
     fn collect_frames(reader: Pin<Box<dyn AsyncBufRead + Send>>, tool_mode: bool) -> Vec<String> {
-        let mut s = anthropic_events_reader(reader, tool_mode);
+        let mut s = anthropic_events_reader(reader, "test-model", tool_mode);
         let mut out = Vec::new();
         while let Some(item) = futures::executor::block_on(s.next()) {
             out.push(item.unwrap());
@@ -430,6 +435,34 @@ mod tests {
         assert!(frames.iter().any(|f| f.contains("tool_use")));
         assert!(frames.iter().any(|f| f.contains("input_json_delta")));
         assert!(frames.iter().any(|f| f.contains("content_block_stop")));
+    }
+
+    #[test]
+    fn anthropic_error_event_emits_message_stop() {
+        let sse = [
+            "data: {\"type\":\"error\",\"errorText\":\"限流了\"}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        .concat();
+        let frames = collect_frames(mock_reader(&sse), false);
+        // 错误后仍必须给出终止事件，否则客户端挂起
+        assert!(frames.iter().any(|f| f.contains("message_stop")));
+        assert!(frames.iter().any(|f| f.contains("message_delta")));
+        assert!(
+            frames.iter().any(|f| f.contains("上游错误"))
+                || frames.iter().any(|f| f.contains("限流"))
+        );
+    }
+
+    #[test]
+    fn anthropic_start_event_has_model() {
+        let sse = "data: {\"type\":\"text-delta\",\"delta\":\"x\"}\n\n";
+        let frames = collect_frames(mock_reader(sse), false);
+        let first = frames.first().unwrap();
+        assert!(
+            first.contains("\"model\":\"test-model\""),
+            "start event model missing: {first}"
+        );
     }
 
     #[test]
