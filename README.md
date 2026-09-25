@@ -6,7 +6,7 @@ TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开�
 
 **完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每日约 20 次」限流（代理池轮换出口缓解），网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.11（终局第 4 轮）**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.12（终局第 4 轮收尾）**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -226,7 +226,7 @@ docs/
 ```
 客户端 → https://try.hwhcie.bond:443
          → nginx (20.204.27.154, sites-enabled/tryingopen)
-         → http://127.0.0.1:47831 (tryingopen2api systemd, v0.1.11)
+         → http://127.0.0.1:47831 (tryingopen2api systemd, v0.1.12)
 ```
 
 - 服务器：`20.204.27.154`（Azure Ubuntu 22.04，nginx 1.18 + systemd）

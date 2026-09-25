@@ -1,7 +1,7 @@
 # Workflow Status — TryingOpen2API 终局闭环总审计
 
-> 更新：2026-09-26（v0.1.11 已发布，终局第 4 轮闭环）
-> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.11 已发布，CI/CD 全绿）
+> 更新：2026-09-26（v0.1.12 已发布，终局第 4 轮闭环 + 缺口清零）
+> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.12 已发布，CI/CD 全绿）
 
 ## 产品定位
 TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
@@ -127,6 +127,21 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 | T16 | B4 MINOR config.json 跟踪 | 🟡 建议 | 推荐移出 git（历史干净，未强制） |
 
 ## 验证记录（第 4 轮，防重复）
-- [x] fmt/clippy/44 tests（Batch-1/2/3 后均绿）
+- [x] fmt/clippy/53 tests（Batch-1/2/3 + v0.1.12 后均绿）
 - [x] docs/audit/README.md 审计台账已建
-- [ ] 公网 E2E（Batch-5 统一跑，避免频繁刷上游配额）
+- [x] 公网 E2E：无 key 探活+安全拒绝（E2E-2026-09-26）；本地带 key 真实上游（E2E-local）；带生产 key 公网全量待用户提供 key 后补跑
+
+
+## v0.1.12（2026-09-26，终局第 4 轮收尾）
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| G1 | truncate_upstream_messages「保留近半」方向反了（截断后丢截断目标、保留超长旧消息） | ✅ 修复（drain 旧保新）+ 3 测试 |
+| G2 | rusqlite 死依赖 + sqlite_path/telemetry_path/proxies_path/precheck_concurrency 死配置 | ✅ 移除（纯 Rust，构建更快） |
+| G3 | Dockerfile/compose/DOCKER.md sqlite 残留声称 | ✅ 清理（会话内存态） |
+| G4 | 限流口径统一「每 24h UTC 日约 20 次」 | ✅ 全仓同步 |
+| G5 | 审计台账/workflow_status 状态残留 | ✅ 全 ✅ + F10 定案 |
+| G6 | 行为层测试补强（session sweep/config env/truncate） | ✅ 46 → 53 tests |
+| G7 | README/ARCHITECTURE/NGINX/SERVER_DEPLOYMENT 版本与目录树漂移 | ✅ 同步 v0.1.12 |
+
+验证：fmt/clippy/53 tests 绿；本地带 key 真实上游冒烟（chat 200 "OK"）；CI/CD/release 全 success；公网 healthz version=0.1.12。

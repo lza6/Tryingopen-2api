@@ -197,6 +197,21 @@ pre { background:#0d1420; border:1px solid var(--border); border-radius:8px; pad
 <div class="result" id="result"></div>
 </div>
 
+
+<h2>八、v0.1.12 收尾更新（2026-09-26 追加）</h2>
+<div class="card">
+<table>
+<tr><th>项</th><th>结果</th></tr>
+<tr><td>truncate 保留近半方向 bug（测试驱动发现）</td><td>✅ 修复 + 3 测试</td></tr>
+<tr><td>rusqlite 死依赖 / 死配置字段</td><td>✅ 移除（纯 Rust）</td></tr>
+<tr><td>限流口径统一「每 24h UTC 日约 20 次」</td><td>✅ 全仓同步</td></tr>
+<tr><td>测试数</td><td>✅ 46 → 53</td></tr>
+<tr><td>本地带 key 真实上游冒烟（v0.1.12）</td><td>✅ chat 200 "OK" / models 24 / 无 key 401</td></tr>
+<tr><td>CI / CD / Release v0.1.12</td><td>✅ 全 success</td></tr>
+<tr><td>公网 healthz</td><td>✅ version=0.1.12</td></tr>
+</table>
+<p>遗留（需用户）：公网带生产 key 全量 E2E —— <code>API_KEY=&lt;key&gt; scripts/e2e_smoke.sh</code>。</p>
+</div>
 <div class="footer">TryingOpen2API 终局闭环总审计 · 第 4 轮报告 · 由 4 审计子代理 + 主线程协作完成 · 2026-09-26</div>
 </div>
 <script>
