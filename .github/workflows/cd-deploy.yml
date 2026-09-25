@@ -38,7 +38,7 @@ jobs:
       - name: Package source
         shell: bash
         run: |
-          tar --exclude='./target' --exclude='./.git' --exclude='./data/proxies.txt' \\
+          tar --exclude='./target' --exclude='./.git' --exclude='./data/proxies.txt' \
               -czf tryingopen2api_src.tar.gz Cargo.toml Cargo.lock src
           ls -la tryingopen2api_src.tar.gz
 
