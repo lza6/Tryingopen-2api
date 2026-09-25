@@ -44,7 +44,9 @@ button:hover { filter:brightness(1.12); }
 button:disabled { opacity:.5; cursor:not-allowed; }
 button.ghost { background:transparent; border:1px solid var(--border); color:var(--text); }
 button.ghost:hover { border-color:var(--accent); color:var(--accent); }
-button.sm { padding:3px 10px; font-size:12px; }
+button.danger { background:#7f1d1d; color:#fecaca; }
+button.sm { padding:3px 10px; font-size:12px; min-height:28px; }
+.guide-box { white-space:pre-wrap; word-break:break-word; }
 input,textarea,select { background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:8px 10px; font-size:13px; width:100%; font-family:inherit; }
 input:focus,textarea:focus,select:focus { border-color:var(--accent); }
 label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
@@ -85,10 +87,10 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
       <div class="card"><div class="lbl">剩余可用次数</div><div class="num" id="c-capacity">-</div></div>
     </div>
     <div class="panel"><h2>说明</h2><p style="line-height:1.8;color:var(--muted);font-size:13px">
-      TryingOpen2API 把 <b>tryingopen.com</b> 的免费开源模型（13 个）逆向为 OpenAI / Anthropic 兼容本地网关。
-      完全匿名：<b>不需要 Cookie / 登录 / API Key</b>。站点按「每 IP 每小时约 20 次」限流，
+      TryingOpen2API 把 <b>tryingopen.com</b> 的免费开源模型（内置 12 个 + 动态目录）逆向为 OpenAI / Anthropic 兼容本地网关。
+      完全匿名：<b>不需要 Cookie / 登录 / API Key</b>。站点按「每 IP 每日约 20 次」限流，
       网关自动用代理池轮换出口 IP（住宅代理文件 + 免费代理源），429 时自动换出口并退避重试，
-      容量 = 可用出口 IP × 每 IP 每小时 20 次 − 已用次数（字段就绪前显示 -），
+      容量 = 可用出口 IP × 每 IP 每日 20 次 − 已用次数，
       全部失败后直连兜底。
     </p></div>
   </section>
@@ -97,7 +99,7 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
     <div class="panel">
       <div class="row" style="margin-bottom:12px">
         <button class="ghost sm" onclick="refreshProxies()">刷新</button>
-        <button class="ghost sm" onclick="refreshFree()">手动抓免费代理</button>
+        <button class="ghost sm" id="btn-refreshfree" onclick="refreshFree()">手动抓免费代理</button>
         <span style="color:var(--muted);font-size:12px">住宅代理文件在 config.json 的 proxy_file 字段（每行一个 http://user:pass@host:port）</span>
       </div>
       <div class="statbar">
@@ -120,7 +122,7 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
   <section id="tab-models" style="display:none">
     <div class="panel">
       <div class="row" style="margin-bottom:12px">
-        <button class="ghost sm" onclick="refreshCatalog()">同步上游目录</button>
+        <button class="ghost sm" id="btn-refreshcat" onclick="refreshCatalog()">同步上游目录</button>
         <span style="color:var(--muted);font-size:12px">启动时自动抓取；失败保留内置静态目录</span>
       </div>
       <div class="tblwrap"><table id="model-table">
@@ -131,42 +133,75 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
   </section>
 
   <section id="tab-guide" style="display:none">
+    <div class="panel"><h2>API Key</h2>
+      <div class="row">
+        <button class="ghost sm" id="btn-genkey">生成 Key</button>
+        <button class="danger sm" id="btn-clearkeys">清空全部动态 Key</button>
+        <span style="color:var(--muted);font-size:12px">动态 Key 仅存内存，重启后失效；config.json 的 api_keys 是持久 Key。</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="new-key" readonly placeholder="生成后显示在这里（仅当前页面可见）" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+    <div class="panel"><h2>接入信息（实时）</h2>
+      <div id="guide-live" class="guide-box">加载中…</div>
+    </div>
     <div class="panel"><h2>默认 effort（思考程度）</h2>
-      <div class="guide-box">客户端在 chat/completions 请求体传 <b>effort</b> 字段：&#10;- balanced：默认，均衡思考&#10;- deep：深度思考（更慢更稳）&#10;- low：低思考（更快更省）&#10;当前主要支持 reasoning 类模型（如 qwen/qwen3.8-27b）；不支持时模型会忽略该字段。模型支持情况以 /api/models（后端补 meta 后）为准。</div>
+      <div class="guide-box">客户端在 chat/completions 请求体传 <b>effort</b> 字段：&#10;- balanced：默认，均衡思考&#10;- deep：深度思考（更慢更稳）&#10;- low：低思考（更快更省）&#10;当前主要支持 reasoning 类模型（如 qwen/qwen3.8-27b）；不支持时模型会忽略该字段。模型支持情况以 /v1/models 为准。</div>
     </div>
     <div class="panel"><h2>OpenAI 兼容</h2>
-      <div class="guide-box">Base URL: http://127.0.0.1:PORT/v1&#10;API Key: sk-local（未配置 api_keys 时任意）&#10;模型: qwen/qwen3.8-27b</div>
+      <div id="guide-openai" class="guide-box">…</div>
     </div>
     <div class="panel"><h2>Anthropic 兼容（Claude Code）</h2>
-      <div class="guide-box">ANTHROPIC_BASE_URL=http://127.0.0.1:PORT&#10;ANTHROPIC_API_KEY=sk-local</div>
+      <div id="guide-anthropic" class="guide-box">…</div>
     </div>
     <div class="panel"><h2>Python OpenAI SDK</h2>
-      <div class="guide-box">from openai import OpenAI&#10;client = OpenAI(base_url="http://127.0.0.1:PORT/v1", api_key="sk-local")&#10;resp = client.chat.completions.create(model="qwen/qwen3.8-27b", messages=[{"role":"user","content":"你好"}])&#10;print(resp.choices[0].message.content)</div>
+      <div id="guide-python" class="guide-box">…</div>
     </div>
   </section>
 </main>
 <div id="toast"></div>
 <script>
-const PORT = location.port || "47831";
 const API = "";
-// 后端渲染面板时注入当前 API key（面板已过 Basic Auth，安全）
+// 后端渲染面板时注入当前 API key（面板已过 Basic Auth / 会话级 key 自举）
 const API_KEYS = __API_KEYS_JSON__;
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 async function j(path, opts) {
   opts = opts || {};
   const headers = new Headers(opts.headers || {});
   if (Array.isArray(API_KEYS) && API_KEYS.length > 0) headers.set('x-api-key', API_KEYS[0]);
+  headers.set('Accept', 'application/json');
   opts.headers = headers;
-  const r = await fetch(API + path, opts);
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d?.error?.message || (r.status + " " + r.statusText));
-  return d;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const r = await fetch(API + path, Object.assign({}, opts, { signal: ctl.signal }));
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d?.error?.message || (r.status + " " + r.statusText));
+    return d;
+  } finally { clearTimeout(timer); }
 }
-function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2600); }
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = 'none'; }, 2600);
+}
+function setBtnBusy(id, busy, labelOn) {
+  const b = document.getElementById(id);
+  if (!b) return;
+  if (busy) { b.dataset.orig = b.textContent; b.textContent = labelOn || '处理中…'; b.disabled = true; }
+  else { b.textContent = b.dataset.orig || b.textContent; b.disabled = false; }
+}
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
+  document.querySelectorAll('nav button').forEach(x => { x.classList.remove('active'); x.setAttribute('aria-selected','false'); });
+  b.classList.add('active'); b.setAttribute('aria-selected','true');
   document.querySelectorAll('main section').forEach(s => s.style.display = 'none');
   document.getElementById('tab-' + b.dataset.tab).style.display = '';
+  if (b.dataset.tab === 'guide') loadGuide();
 });
 async function loadOverview() {
   try {
@@ -185,53 +220,62 @@ async function loadOverview() {
   } catch (e) { document.getElementById('dot').className = 'dot err'; toast('加载失败: ' + e.message); }
 }
 async function refreshProxies() {
+  const tb = document.querySelector('#proxy-table tbody');
   try {
     const snap = await j('/api/proxies');
-    const tb = document.querySelector('#proxy-table tbody');
-    tb.innerHTML = '';
     const items = snap.items || [];
     document.getElementById('proxy-empty').style.display = items.length ? 'none' : '';
     document.getElementById('proxy-table').style.display = items.length ? '' : 'none';
-    const fmtCap = (v) => (typeof v === 'number' && isFinite(v)) ? v : '-';
-    for (const it of items) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${it.host_port || '-'}</td><td>${it.source || ''}</td>` +
-        `<td class="num">${(typeof it.latency_ms === 'number') ? it.latency_ms + ' ms' : '-'}</td>` +
-        `<td class="num">${it.daily_uses ?? 0}</td>` +
-        `<td class="num">${fmtCap(it.capacity_remaining)}</td>` +
-        `<td><span class="badge ${it.health_score >= .8 ? 'ok' : it.health_score >= .4 ? 'warn' : 'err'}">${it.health_score}</span></td>` +
-        `<td>${it.cooling ? it.cooldown_seconds + 's' : '✓'}</td><td class="num">${it.fails ?? 0}</td>`;
-      tb.appendChild(tr);
-    }
+    const fmtNum = (v) => (typeof v === 'number' && isFinite(v)) ? v : '-';
+    const rows = items.map(it => {
+      const hs = fmtNum(it.health_score);
+      const hsCls = (hs === '-') ? 'dim' : (hs >= .8 ? 'ok' : hs >= .4 ? 'warn' : 'err');
+      const cool = it.cooling ? (it.cooldown_seconds != null ? it.cooldown_seconds + 's' : '冷却中') : '✓';
+      const src = esc(it.source || '-');
+      const hp = esc(it.host_port || '-');
+      const lat = (typeof it.latency_ms === 'number' && isFinite(it.latency_ms)) ? it.latency_ms + ' ms' : '-';
+      const du = (typeof it.daily_uses === 'number') ? it.daily_uses : 0;
+      const cap = fmtNum(it.capacity_remaining);
+      const fails = (typeof it.fails === 'number') ? it.fails : 0;
+      return `<tr><td>${hp}</td><td>${src}</td><td class="num">${lat}</td><td class="num">${du}</td><td class="num">${cap}</td><td><span class="badge ${hsCls}">${hs}</span></td><td>${cool}</td><td class="num">${fails}</td></tr>`;
+    });
+    tb.innerHTML = rows.join('') || '<tr><td colspan="8" class="empty">暂无代理数据</td></tr>';
     const now = new Date();
-    document.getElementById('proxy-last').textContent = now.toLocaleTimeString() + ' ' + now.toLocaleDateString();
+    document.getElementById('proxy-last').textContent = new Intl.DateTimeFormat('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(now);
     document.getElementById('proxy-free').textContent = snap.free ?? '-';
     document.getElementById('proxy-res').textContent = snap.residential ?? '-';
     document.getElementById('proxy-total').textContent = snap.total ?? '-';
     document.getElementById('proxy-avail').textContent = snap.available ?? '-';
-    document.getElementById('proxy-cap').textContent = fmtCap(snap.capacity?.capacity_remaining);
-    loadOverview();
-  } catch (e) { toast('代理池读取失败: ' + e.message); }
+    document.getElementById('proxy-cap').textContent = fmtNum(snap.capacity?.capacity_remaining);
+  } catch (e) {
+    // 失败保留旧数据，仅 toast
+    document.getElementById('proxy-table').style.display = '';
+    document.getElementById('proxy-empty').style.display = 'none';
+    toast('代理池读取失败: ' + e.message);
+  }
 }
 async function refreshFree() {
+  setBtnBusy('btn-refreshfree', true, '抓取中…');
   try {
     const d = await j('/api/proxies/refresh-free', { method: 'POST' });
     toast('免费代理注入 ' + (d.injected ?? 0) + ' 个');
     refreshProxies();
   } catch (e) { toast(e.message); }
+  finally { setBtnBusy('btn-refreshfree', false); }
 }
 async function refreshCatalog() {
+  setBtnBusy('btn-refreshcat', true, '同步中…');
   try {
     const d = await j('/api/catalog/refresh', { method: 'POST' });
     toast('模型目录已同步: ' + (d.models ?? 0) + ' 个');
     loadModels();
   } catch (e) { toast('目录同步失败: ' + e.message); }
+  finally { setBtnBusy('btn-refreshcat', false); }
 }
 async function loadModels() {
   const tb = document.querySelector('#model-table tbody');
   try {
     const list = await j('/v1/models');
-    tb.innerHTML = '';
     const metas = {};
     for (const m of list.data || []) metas[m.id] = m;
     let guideIds = [];
@@ -239,20 +283,61 @@ async function loadModels() {
     for (const id of guideIds) { if (!metas[id]) metas[id] = { id }; }
     const ids = Object.keys(metas);
     if (ids.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="empty">暂无模型</td></tr>'; return; }
-    for (const id of ids) {
+    const rows = ids.map(id => {
       const m = metas[id] || {};
       const ctx = m.context || (m.context_window ? (m.context_window/1000) + 'k' : '-');
-      const price = (typeof m.price_per_mtok === 'number') ? '$' + m.price_per_mtok : (m.price_per_mtok || '-');
-      // 后端 v0.1.7+ 返回真实 tools/vision 布尔；老后端缺字段时按「未知」降级（不再显示假 TODO）
+      const pm = m.price_per_mtok;
+      const price = (typeof pm === 'number' && pm > 0) ? '$' + pm.toFixed(2) : (typeof pm === 'number' && pm === 0 ? '免费' : (typeof pm === 'string' ? esc(pm) : '-'));
       const tools = (m.tools === true) ? '<span class="badge ok">工具</span>' : (m.tools === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
       const vision = (m.vision === true) ? '<span class="badge ok">视觉</span>' : (m.vision === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${id}</td><td>${m.label || m.owned_by || '-'}</td><td>${ctx}</td>` +
-        `<td class="num">${price}</td><td>${tools}</td><td>${vision}</td>`;
-      tb.appendChild(tr);
-    }
-  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="empty">模型读取失败: ' + e.message + '</td></tr>'; toast('模型读取失败: ' + e.message); }
+      return `<tr><td>${esc(id)}</td><td>${esc(m.label || m.owned_by || '-')}</td><td>${esc(ctx)}</td><td class="num">${price}</td><td>${tools}</td><td>${vision}</td></tr>`;
+    });
+    tb.innerHTML = rows.join('');
+  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="empty">模型读取失败: ' + esc(e.message) + '</td></tr>'; toast('模型读取失败: ' + e.message); }
 }
+async function loadGuide() {
+  const live = document.getElementById('guide-live');
+  const oa = document.getElementById('guide-openai');
+  const anth = document.getElementById('guide-anthropic');
+  const py = document.getElementById('guide-python');
+  try {
+    const g = await j('/api/guide');
+    const base = g.base_url || (location.protocol + '//' + location.host + '/v1');
+    const anthBase = base.replace(/\/v1$/, '');
+    const key = (Array.isArray(API_KEYS) && API_KEYS.length > 0) ? API_KEYS[0] : (g.api_keys_configured ? '<需要有效 key>' : 'sk-local（未配置 api_keys 时任意）');
+    const models = (g.models && g.models.length) ? g.models.join('、') : '（目录为空，点击同步）';
+    live.innerHTML = `监听: ${esc(g.listen_addr || '-')}\nBase URL: ${esc(base)}\n模型数: ${esc(g.models ? g.models.length : '-')}（${esc(models)}）\n代理池: ${esc(g.proxy_count ?? '-')}\n上游: ${esc(g.upstream || '-')}\n密钥已配置: ${esc(g.api_keys_configured ? '是' : '否（建议先配置）')}`;
+    oa.innerHTML = `Base URL: ${esc(base)}\nAPI Key: ${esc(key)}\n模型: ${esc(models)}`;
+    anth.innerHTML = `ANTHROPIC_BASE_URL=${esc(anthBase)}\nANTHROPIC_API_KEY=${esc(key)}`;
+    py.innerHTML = `from openai import OpenAI\nclient = OpenAI(base_url="${esc(base)}", api_key="${esc(key)}")\nmodel = "${esc(g.models?.[0] || 'qwen/qwen3.8-27b')}"`;
+  } catch (e) {
+    live.innerHTML = '接入信息加载失败: ' + esc(e.message);
+    oa.textContent = '加载失败';
+    anth.textContent = '加载失败';
+    py.textContent = '加载失败';
+  }
+}
+async function genKey() {
+  setBtnBusy('btn-genkey', true);
+  try {
+    const d = await j('/api/config/api-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'generate' }) });
+    const inp = document.getElementById('new-key');
+    inp.value = d.key || '';
+    inp.select();
+    toast('已生成，请复制保存（仅内存，重启失效）');
+  } catch (e) { toast('生成失败: ' + e.message); }
+  finally { setBtnBusy('btn-genkey', false); }
+}
+async function clearKeys() {
+  if (!window.confirm('确定清空全部动态 Key？此操作会关闭鉴权（空 key 放行模式），且 config.json 的静态 key 不受影响。继续请输入确认。')) return;
+  try {
+    await j('/api/config/api-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear', admin_confirm: true }) });
+    toast('已清空动态 Key，页面刷新后生效');
+    document.getElementById('new-key').value = '';
+  } catch (e) { toast('清空失败: ' + e.message); }
+}
+document.getElementById('btn-genkey').onclick = genKey;
+document.getElementById('btn-clearkeys').onclick = clearKeys;
 loadOverview(); refreshProxies(); loadModels();
 setInterval(() => { loadOverview(); refreshProxies(); }, 15000);
 </script>
