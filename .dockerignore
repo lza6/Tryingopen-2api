@@ -1,0 +1,31 @@
+# Rust 构建产物
+target/
+
+# Git
+.git/
+
+# 数据文件（运行时数据由 volume 挂载，不进镜像）
+data/
+data/*.txt
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+
+# 本地配置（config 由 volume 挂载，避免把密钥/API Key 打进镜像）
+config.json
+config.local.json
+
+# 本地工具/文档/参考
+reference/
+源代码、网络数据包/
+graft/
+.agents/
+.specify/
+
+# 编辑器和系统文件
+.idea/
+.vscode/
+*.iml
+*.log
+.DS_Store
+Thumbs.db

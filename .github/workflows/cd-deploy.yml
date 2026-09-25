@@ -1,0 +1,88 @@
+# TryingOpen2API — CD：main push 后自动部署到 Azure 服务器
+#
+# 依赖 Secret（GitHub repo Settings → Secrets and variables → Actions）：
+#   SSH_HOST  = 20.204.27.154
+#   SSH_USER  = root
+#   SSH_PASS  = <root 密码>
+#
+# 流程：main push → 打包源码 → paramiko 上传 → 服务器本地编译(aarch64) → 停服替换重启 → healthz 验证
+
+name: CD-Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deploy:
+    name: deploy (aarch64 + systemd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install paramiko
+        run: pip install --quiet paramiko
+
+      - name: Package source
+        shell: bash
+        run: |
+          tar --exclude='./target' --exclude='./.git' --exclude='./data/proxies.txt' \
+              -czf tryingopen2api_src.tar.gz Cargo.toml Cargo.lock src
+          ls -la tryingopen2api_src.tar.gz
+
+      - name: Deploy via SSH (build on server)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PASS: ${{ secrets.SSH_PASS }}
+        run: |
+          python3 <<'PYEOF'
+          import paramiko, os, sys
+          host = os.environ["SSH_HOST"]
+          user = os.environ["SSH_USER"]
+          pwd  = os.environ["SSH_PASS"]
+          c = paramiko.SSHClient()
+          c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+          c.connect(host, port=22, username=user, password=pwd, timeout=20, banner_timeout=20, auth_timeout=20)
+          def run(cmd, timeout=900):
+              stdin, stdout, stderr = c.exec_command(cmd, timeout=timeout)
+              out = stdout.read().decode("utf-8","replace")
+              err = stderr.read().decode("utf-8","replace")
+              rc = stdout.channel.recv_exit_status()
+              print("[cmd]", cmd, "[rc]", rc)
+              print(out[-1500:])
+              if err.strip(): print(err[-1500:])
+              return rc
+          sftp = c.open_sftp()
+          sftp.put("tryingopen2api_src.tar.gz", "/root/tryingopen2api_src.tar.gz")
+          sftp.close()
+          print("[uploaded source]")
+          script = "set -e; export PATH=$PATH:/root/.cargo/bin; cd /root; rm -rf tryingopen-2api-cd; mkdir -p tryingopen-2api-cd; tar -xzf /root/tryingopen2api_src.tar.gz -C tryingopen-2api-cd; cd tryingopen-2api-cd; pkill -f 'cargo build --release' 2>/dev/null || true; sleep 1; nohup cargo build --release > /root/cd_build.log 2>&1 & echo BUILD_PID=$!"
+          rc = run("bash -c " + repr(script), timeout=60)
+          if rc != 0:
+              sys.exit(1)
+          wait = "export PATH=$PATH:/root/.cargo/bin; for i in $(seq 1 90); do if [ -f /root/tryingopen-2api-cd/target/release/tryingopen2api ]; then if ! pgrep -f 'cargo build --release' > /dev/null; then echo BUILD_READY after ${i}0s; exit 0; fi; fi; sleep 10; done; echo BUILD_TIMEOUT; tail -30 /root/cd_build.log; exit 1"
+          rc = run("bash -c " + repr(wait), timeout=920)
+          if rc != 0:
+              sys.exit(1)
+          deploy = "set -e; BIN=/root/tryingopen-2api-cd/target/release/tryingopen2api; ls -la $BIN; systemctl stop tryingopen2api; sleep 1; mkdir -p /opt/tryingopen2api/data /opt/tryingopen2api/bin; cp -f $BIN /opt/tryingopen2api/bin/tryingopen2api; chmod +x /opt/tryingopen2api/bin/tryingopen2api; systemctl start tryingopen2api; sleep 5; curl -sS -m 10 http://127.0.0.1:47831/healthz; echo CD_DEPLOY_OK"
+          rc = run("bash -c " + repr(deploy), timeout=120)
+          if rc != 0:
+              sys.exit(1)
+          c.close()
+          PYEOF
+
+      - name: Verify public healthz
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          curl -sS -m 15 "http://${SSH_HOST}:47831/healthz" | head -c 300
+          echo ""
+          echo "CD_VERIFY_DONE"

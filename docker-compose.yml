@@ -1,0 +1,20 @@
+name: tryingopen2api
+
+services:
+  tryingopen2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tryingopen2api:latest
+    container_name: tryingopen2api
+    ports:
+      - "47831:47831"
+    volumes:
+      # 配置只读挂载（宿主机 config.json -> 容器 /app/config.json）
+      - ./config.json:/app/config.json:ro
+      # 数据持久化（sqlite 会话/遥测、proxies.txt），可改名 ./data 为任意宿主机目录
+      - ./data:/app/data
+    environment:
+      # 日志级别；更多覆盖项见 docs/DOCKER.md 环境变量表
+      RUST_LOG: info
+    restart: unless-stopped
