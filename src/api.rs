@@ -199,7 +199,11 @@ fn cb_open_response() -> Response {
 }
 
 /// 请求日志：脱敏 key + 结构化字段（打开黑匣子）
+/// redact_logs=true（默认）→ detail 截断到 300 字符且剥离疑似密钥；
+/// redact_logs=false → 完整 detail（排障用，慎开）。
+#[allow(clippy::too_many_arguments)]
 fn log_request(
+    redact: bool,
     endpoint: &str,
     key: Option<&str>,
     model: &str,
@@ -218,9 +222,20 @@ fn log_request(
         })
         .unwrap_or_else(|| "-".to_string());
     let ms = elapsed.as_millis();
-    match detail {
-        Some(d) => tracing::info!(
-            "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms detail={d}"
+    let d = detail.map(|s| {
+        if redact {
+            // 截断 + 剥离常见密钥形态（sk-xxx / Bearer token）
+            let cut: String = s.chars().take(300).collect();
+            let re = regex::Regex::new(r"(?i)(sk-[a-z0-9]{8,}|bearer\s+[a-z0-9]{8,})")
+                .unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+            re.replace_all(&cut, "***").into_owned()
+        } else {
+            s.to_string()
+        }
+    });
+    match d {
+        Some(dd) => tracing::info!(
+            "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms detail={dd}"
         ),
         None => tracing::info!(
             "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms"
@@ -493,6 +508,7 @@ async fn handle_chat_completions(
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
         log_request(
+            state.cfg.redact_logs,
             "v1_chat_completions",
             request_key(&headers).as_deref(),
             body.model.as_str(),
@@ -513,6 +529,7 @@ async fn handle_chat_completions(
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
             log_request(
+                state.cfg.redact_logs,
                 "v1_chat_completions",
                 Some(key.as_str()),
                 body.model.as_str(),
@@ -536,6 +553,7 @@ async fn handle_chat_completions(
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
         log_request(
+            state.cfg.redact_logs,
             "v1_chat_completions",
             request_key(&headers).as_deref(),
             body.model.as_str(),
@@ -585,6 +603,7 @@ async fn handle_chat_completions(
             state.sessions.touch(&thread_key).await;
             if body.stream {
                 log_request(
+                    state.cfg.redact_logs,
                     "v1_chat_completions",
                     request_key(&headers).as_deref(),
                     &model,
@@ -599,6 +618,7 @@ async fn handle_chat_completions(
             } else {
                 let nr = collect_nonstream(up).await;
                 log_request(
+                    state.cfg.redact_logs,
                     "v1_chat_completions",
                     request_key(&headers).as_deref(),
                     &model,
@@ -668,6 +688,7 @@ async fn handle_chat_completions(
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
             log_request(
+                state.cfg.redact_logs,
                 "v1_chat_completions",
                 request_key(&headers).as_deref(),
                 &model,
@@ -941,6 +962,7 @@ async fn handle_claude_messages(
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
         log_request(
+            state.cfg.redact_logs,
             "v1_messages",
             request_key(&headers).as_deref(),
             body.model.as_str(),
@@ -960,6 +982,7 @@ async fn handle_claude_messages(
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
             log_request(
+                state.cfg.redact_logs,
                 "v1_messages",
                 Some(key.as_str()),
                 body.model.as_str(),
@@ -982,6 +1005,7 @@ async fn handle_claude_messages(
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
         log_request(
+            state.cfg.redact_logs,
             "v1_messages",
             request_key(&headers).as_deref(),
             body.model.as_str(),
@@ -1110,6 +1134,7 @@ async fn handle_claude_messages(
             state.sessions.touch(&thread_key).await;
             if body.stream {
                 log_request(
+                    state.cfg.redact_logs,
                     "v1_messages",
                     request_key(&headers).as_deref(),
                     &model,
@@ -1162,6 +1187,7 @@ async fn handle_claude_messages(
                 })
                 .unwrap_or(json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }));
             log_request(
+                state.cfg.redact_logs,
                 "v1_messages",
                 request_key(&headers).as_deref(),
                 &model,
@@ -1203,6 +1229,7 @@ async fn handle_claude_messages(
                 .metrics
                 .observe_duration(start.elapsed().as_secs_f64());
             log_request(
+                state.cfg.redact_logs,
                 "v1_messages",
                 request_key(&headers).as_deref(),
                 &model,

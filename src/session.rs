@@ -30,7 +30,12 @@ impl SessionMap {
     pub async fn insert(&self, key: &str, binding: SessionBinding) {
         let mut m = self.inner.write().await;
         m.insert(key.to_string(), binding);
-        // 防无界增长：超过阈值清理最旧（按 last_active 字典序近似）
+        Self::sweep(&mut m);
+    }
+
+    /// 防无界增长：超过阈值清理最旧（按 last_active 字典序近似）
+    /// 由 insert / ensure / touch 共同调用，保证主请求路径也触发清理
+    fn sweep(m: &mut HashMap<String, SessionBinding>) {
         if m.len() > 5000 {
             let mut keys: Vec<(String, String)> = m
                 .iter()
@@ -64,10 +69,11 @@ impl SessionMap {
             created_at: chrono::Utc::now().to_rfc3339(),
             last_active: chrono::Utc::now().to_rfc3339(),
         };
-        self.inner
-            .write()
-            .await
-            .insert(key.to_string(), binding.clone());
+        {
+            let mut m = self.inner.write().await;
+            m.insert(key.to_string(), binding.clone());
+            Self::sweep(&mut m);
+        }
         binding
     }
 
@@ -76,5 +82,6 @@ impl SessionMap {
         if let Some(b) = map.get_mut(key) {
             b.last_active = chrono::Utc::now().to_rfc3339();
         }
+        Self::sweep(&mut map);
     }
 }

@@ -609,15 +609,17 @@ impl ProxyPool {
             .iter()
             .filter(|e| e.available(t, hourly_per_ip))
             .count();
-        let daily_used: u32 = data
+        // 容量口径：总容量 = 可用代理数 × hourly_per_ip；
+        // 剩余 = Σ 每个可用代理剩余次数 max(0, hourly_per_ip − daily_uses)
+        // （避免“全部代理用满时 used>total”的矛盾：只按可用代理统计）
+        let capacity_total = available as u64 * hourly_per_ip as u64;
+        let capacity_remaining: u64 = data
             .entries
             .iter()
-            .filter(|e| (t / DAY as f64) as i64 == e.day_key)
-            .map(|e| e.daily_uses)
+            .filter(|e| e.available(t, hourly_per_ip))
+            .map(|e| (hourly_per_ip as u64).saturating_sub(e.daily_uses as u64))
             .sum();
-        let capacity_total = available as u64 * hourly_per_ip as u64;
-        let capacity_used = daily_used as u64;
-        let capacity_remaining = capacity_total.saturating_sub(capacity_used);
+        let capacity_used = capacity_total.saturating_sub(capacity_remaining);
         serde_json::json!({
             "total": data.entries.len(),
             "residential": data.entries.iter().filter(|e| e.source == "residential").count(),
