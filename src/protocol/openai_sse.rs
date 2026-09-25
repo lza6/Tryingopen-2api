@@ -359,12 +359,25 @@ pub fn detect_tool_call(buf: &str) -> Option<ToolCallInfo> {
                 continue;
             }
         };
-        let tc = match v.get("tool_call") {
-            Some(tc) => tc,
-            None => {
+        let tc_owned;
+        let tc = if let Some(tc) = v.get("tool_call") {
+            tc
+        } else if let Some(tc) = v.get("function_call") {
+            tc
+        } else if let Some(arr) = v.get("tool_calls").and_then(|x| x.as_array()) {
+            if let Some(first) = arr.first() {
+                tc_owned = serde_json::json!({
+                    "name": first.get("function").and_then(|f| f.get("name")).or_else(|| first.get("name")),
+                    "arguments": first.get("function").and_then(|f| f.get("arguments")).or_else(|| first.get("arguments"))
+                });
+                &tc_owned
+            } else {
                 search = start + 1;
                 continue;
             }
+        } else {
+            search = start + 1;
+            continue;
         };
         let name = tc
             .get("name")

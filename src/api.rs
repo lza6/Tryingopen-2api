@@ -47,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/models", get(handle_v1_models))
         .route("/v1/chat/completions", post(handle_chat_completions))
         .route("/v1/messages", post(handle_claude_messages))
+        .route("/v1/responses", post(handle_responses))
         .route("/api/proxies", get(handle_proxies))
         .route("/api/proxies/refresh-free", post(handle_refresh_free))
         .route("/api/catalog/refresh", post(handle_catalog_refresh))
@@ -311,6 +312,8 @@ pub struct ChatMessage {
     pub name: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
 }
 
 fn message_text(content: &serde_json::Value) -> String {
@@ -320,12 +323,92 @@ fn message_text(content: &serde_json::Value) -> String {
             let mut out = String::new();
             for part in arr {
                 if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
                     out.push_str(t);
+                } else if part.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
+                    if let Some(t) = part.get("content").and_then(|v| v.as_str()) {
+                        out.push_str(t);
+                    }
                 }
             }
             out
         }
-        _ => String::new(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn render_tool_calls(calls: &serde_json::Value) -> String {
+    let Some(arr) = calls.as_array() else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for c in arr {
+        let name = c
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|v| v.as_str())
+            .or_else(|| c.get("name").and_then(|v| v.as_str()))
+            .unwrap_or("tool");
+        let args = c
+            .get("function")
+            .and_then(|f| f.get("arguments"))
+            .or_else(|| c.get("arguments"))
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_else(|| "{}".into());
+        out.push_str(&format!("\n[tool_call name={name} arguments={args}]"));
+    }
+    out
+}
+
+/// 上游按整段对话计长度。超预算时丢掉最旧的非系统消息，避免 HTTP 413。
+fn truncate_upstream_messages(msgs: &mut Vec<UpstreamMessage>, max_chars: usize) {
+    fn msg_len(m: &UpstreamMessage) -> usize {
+        m.parts
+            .iter()
+            .map(|p| p.text.as_deref().unwrap_or("").chars().count())
+            .sum()
+    }
+    let total: usize = msgs.iter().map(msg_len).sum();
+    if total <= max_chars || msgs.len() <= 1 {
+        return;
+    }
+    let mut keep_from = 0usize;
+    let mut acc = 0usize;
+    for (i, m) in msgs.iter().enumerate().rev() {
+        let n = msg_len(m);
+        if acc + n > max_chars && i + 1 != msgs.len() {
+            keep_from = i + 1;
+            break;
+        }
+        acc += n;
+        if i == 0 {
+            keep_from = 0;
+        }
+    }
+    if keep_from > 0 {
+        msgs.drain(0..keep_from);
+        msgs.insert(
+            0,
+            UpstreamMessage {
+                id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
+                role: "user".into(),
+                parts: vec![MessagePart {
+                    part_type: "text".into(),
+                    text: Some(
+                        "[earlier messages omitted: chat was too long for the upstream]".into(),
+                    ),
+                    media_type: None,
+                    url: None,
+                }],
+                metadata: None,
+            },
+        );
     }
 }
 
@@ -384,7 +467,7 @@ fn media_type(url: &str) -> String {
 fn build_upstream_request(
     model: &str,
     messages: &[ChatMessage],
-    images: Vec<MessagePart>,
+    _images: Vec<MessagePart>,
     effort: &str,
     tools: Option<&serde_json::Value>,
     tool_choice: Option<&serde_json::Value>,
@@ -405,7 +488,7 @@ fn build_upstream_request(
         }
     }
     for m in messages {
-        if m.role == "system" {
+        if m.role == "system" || m.role == "developer" {
             let t = message_text(&m.content);
             if !t.is_empty() {
                 system_texts.push(t);
@@ -413,21 +496,63 @@ fn build_upstream_request(
         }
     }
     for m in messages {
-        let role = m.role.as_str();
-        if role == "system" {
+        let role_raw = m.role.as_str();
+        if role_raw == "system" || role_raw == "developer" {
             continue;
         }
-        let text = message_text(&m.content);
+        let mut text = message_text(&m.content);
+        if let Some(calls) = &m.tool_calls {
+            text.push_str(&render_tool_calls(calls));
+        }
+        // 上游不接受 role=tool/function，否则回 Invalid messages。改写成 user 文本。
+        let role = if role_raw == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
+        if role_raw == "tool" || role_raw == "function" {
+            let name = m.name.clone().unwrap_or_else(|| "tool".into());
+            let id = m.tool_call_id.clone().unwrap_or_default();
+            text = format!("[tool_result name={name} id={id}]\n{text}");
+        }
         let mut parts: Vec<MessagePart> = vec![MessagePart {
             part_type: "text".into(),
             text: Some(text),
             media_type: None,
             url: None,
         }];
-        if role == "user" {
-            for img in &images {
-                parts.push(img.clone());
+        if role_raw == "user" {
+            if let serde_json::Value::Array(arr) = &m.content {
+                for part in arr {
+                    if part.get("type").and_then(|v| v.as_str()) != Some("image_url") {
+                        continue;
+                    }
+                    let url = part
+                        .get("image_url")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            part.get("image_url")
+                                .and_then(|v| v.get("url"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or("");
+                    if !url.is_empty() {
+                        parts.push(MessagePart {
+                            part_type: "file".into(),
+                            text: None,
+                            media_type: Some(media_type(url)),
+                            url: Some(url.to_string()),
+                        });
+                    }
+                }
             }
+        }
+        if message_text(&m.content).trim().is_empty()
+            && m.tool_calls.is_none()
+            && parts.len() == 1
+            && role_raw != "user"
+        {
+            continue;
         }
         converted.push(UpstreamMessage {
             id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
@@ -436,6 +561,7 @@ fn build_upstream_request(
             metadata: None,
         });
     }
+    truncate_upstream_messages(&mut converted, 12_000);
     // 系统提示 → 拼进第一条 user 的 [SYSTEM INSTRUCTIONS]（上游无 system 角色）
     if !system_texts.is_empty() {
         let sys = format!(
@@ -755,6 +881,11 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                         msg
                     )));
                 }
+                if crate::upstream::is_chat_too_long_error(&msg) {
+                    return Err(ApiError::bad_request(
+                        "上游拒绝：当前对话文本过长（HTTP 413）。请新开对话，或减少历史消息后再试。",
+                    ));
+                }
                 last_err = Some(msg);
                 tokio::time::sleep(Duration::from_secs(2u64.pow(attempt.min(3) as u32))).await;
             }
@@ -777,6 +908,11 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                     return Err(ApiError::upstream(format!(
                         "模型当前暂停/容量不足，请换一个模型重试: {msg}"
                     )));
+                }
+                if crate::upstream::is_chat_too_long_error(&msg) {
+                    return Err(ApiError::bad_request(
+                        "上游拒绝：当前对话文本过长（HTTP 413）。请新开对话，或减少历史消息后再试。",
+                    ));
                 }
                 last_err = Some(msg);
             }
@@ -1239,6 +1375,144 @@ async fn handle_claude_messages(
                 start.elapsed(),
             );
             api_err_response_anthropic(e)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponsesRequest {
+    model: String,
+    #[serde(default)]
+    input: serde_json::Value,
+    #[serde(default)]
+    instructions: Option<String>,
+    #[serde(default)]
+    tools: Option<serde_json::Value>,
+    #[serde(default)]
+    tool_choice: Option<serde_json::Value>,
+    #[serde(default)]
+    stream: bool,
+    #[serde(default)]
+    max_output_tokens: Option<u64>,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+async fn handle_responses(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ResponsesRequest>,
+) -> Response {
+    let start = std::time::Instant::now();
+    if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        return api_err_response(e);
+    }
+    if let Some(key) = request_key(&headers) {
+        if let Err(retry_after) = state.limiter.check(&key) {
+            return rate_limited_response(
+                ApiError::rate_limited("请求过于频繁，请稍后重试"),
+                retry_after,
+            );
+        }
+    }
+    if !state.breaker.allow() {
+        return cb_open_response();
+    }
+    let created = chrono::Utc::now().timestamp();
+    let resp_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
+    let model = state
+        .registry
+        .resolve(&body.model, &state.cfg.fallback_models)
+        .await;
+    let tools = body
+        .tools
+        .as_ref()
+        .map(crate::protocol::responses::normalize_tools);
+    let msg_vals =
+        crate::protocol::responses::input_to_messages(body.instructions.as_deref(), &body.input);
+    let messages: Vec<ChatMessage> =
+        serde_json::from_value(serde_json::Value::Array(msg_vals)).unwrap_or_default();
+    let tool_mode = tools
+        .as_ref()
+        .map(|t| t.as_array().map(|v| !v.is_empty()).unwrap_or(false))
+        .unwrap_or(false);
+    let effort = body.effort.clone().unwrap_or_else(default_effort);
+    let req = build_upstream_request(
+        &model,
+        &messages,
+        Vec::new(),
+        &effort,
+        tools.as_ref(),
+        body.tool_choice.as_ref(),
+    );
+    let _ = (body.max_output_tokens, body.user);
+    match try_rounds(&state, &req).await {
+        Ok(up) => {
+            state.breaker.record_success();
+            state
+                .metrics
+                .record_request("v1_responses", "openai", "2xx");
+            state
+                .metrics
+                .observe_duration(start.elapsed().as_secs_f64());
+            if body.stream {
+                let inner =
+                    crate::protocol::openai_sse::openai_events(up, &model, created, tool_mode);
+                let wrapped = crate::protocol::responses::ResponsesSse {
+                    inner,
+                    acc: crate::protocol::responses::StreamAccum::default(),
+                    id: resp_id,
+                    model: model.clone(),
+                };
+                return Response::builder()
+                    .header("content-type", "text/event-stream; charset=utf-8")
+                    .header("cache-control", "no-cache")
+                    .body(axum::body::Body::from_stream(wrapped))
+                    .unwrap();
+            }
+            let nr = collect_nonstream(up).await;
+            let tc = crate::protocol::openai_sse::detect_tool_call(&nr.text);
+            let body = crate::protocol::responses::completed_response(
+                &resp_id,
+                &model,
+                if tc.is_some() { "" } else { &nr.text },
+                tc.as_ref().map(|t| t.name.as_str()),
+                tc.as_ref().map(|t| t.arguments_json.as_str()),
+                tc.as_ref().map(|t| t.id.as_str()),
+                nr.usage.as_ref(),
+            );
+            log_request(
+                state.cfg.redact_logs,
+                "v1_responses",
+                request_key(&headers).as_deref(),
+                &model,
+                false,
+                "200",
+                Some("responses"),
+                start.elapsed(),
+            );
+            Json(body).into_response()
+        }
+        Err(e) => {
+            if crate::upstream::is_model_not_found_error(e.message()) {
+                state.registry.mark_offline(&model).await;
+            }
+            if e.status().is_server_error() {
+                state.breaker.record_failure();
+            }
+            log_request(
+                state.cfg.redact_logs,
+                "v1_responses",
+                request_key(&headers).as_deref(),
+                &model,
+                body.stream,
+                "err",
+                Some(e.message()),
+                start.elapsed(),
+            );
+            api_err_response(e)
         }
     }
 }

@@ -3,4 +3,5 @@
 pub mod anthropic_sse;
 pub mod openai_sse;
 pub mod openai_sse_helper;
+pub mod responses;
 pub mod stream;

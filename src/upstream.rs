@@ -344,6 +344,18 @@ pub fn is_model_not_found_error(err: &str) -> bool {
 
 /// 判断错误是否「模型暂停 / 容量不足」（临时不可用，非永久下线）
 /// tryingopen 真实返回：GLM 5.2 is paused while we bring up more capacity. Pick another model to keep going.
+/// Chat too long / HTTP 413: retrying other exits cannot help.
+pub fn is_chat_too_long_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("payload too large")
+        || lower.contains("http 413")
+        || lower.contains(" 413 ")
+        || lower.contains("too much text")
+        || lower.contains("start a new one")
+        || lower.contains("对话太长")
+        || lower.contains("内容过长")
+}
+
 pub fn is_model_paused_error(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
     let paused_kw = [
@@ -365,7 +377,7 @@ pub fn is_model_paused_error(err: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_model_not_found_error, is_model_paused_error};
+    use super::{is_chat_too_long_error, is_model_not_found_error, is_model_paused_error};
 
     #[test]
     fn model_not_found_tryingopen_that_model_isnt_on_page() {
@@ -396,5 +408,12 @@ mod tests {
         // 非暂停错误不误判
         assert!(!is_model_paused_error("That model isn't on this page."));
         assert!(!is_model_paused_error("upstream timeout"));
+    }
+
+    #[test]
+    fn chat_too_long_413() {
+        let err = "HTTP 413 Payload Too Large: too much text in this chat now. Start a new one";
+        assert!(is_chat_too_long_error(err));
+        assert!(!is_chat_too_long_error("upstream timeout"));
     }
 }

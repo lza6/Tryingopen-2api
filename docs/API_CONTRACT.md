@@ -118,3 +118,15 @@
 4. **工具调用是提示词式**：模型可能选择不调用工具（会说明），客户端需容忍文本回复。流式与非流式均会转换为标准 `tool_calls`（非流式 `finish_reason:tool_calls`）；Anthropic 端点支持 `tool_choice` 字段。
 5. **多模态**：支持 image_url/data URL → 上游 file part（需 supportsImages 模型，如 qwen）。
 6. **effort**：balanced/deep 等由上游决定，未知值可能被忽略或报错。
+
+
+### POST /v1/responses（OpenAI Responses）
+- 把 `input`（字符串或消息/function_call 数组）、`instructions`、`tools` 转成内部 chat 再调上游。
+- `tools` 支持 Responses 扁平写法 `{type,name,parameters}`，也支持 Chat 的 `{type,function:{name}}`。
+- 非流式返回 `object=response`，`output` 里是 `message/output_text` 或 `function_call`。
+- `stream=true` 返回 SSE：`response.created`、`response.output_text.delta`、`response.function_call_arguments.delta`、`response.completed`。
+- 多轮工具：请把上一次的 `function_call` 和 `function_call_output` 放回 `input`。Chat 接口同理要回传 `assistant.tool_calls` 和 `role=tool`。
+
+### 对话过长
+- 网关会截断最旧历史（约 12000 字）再发给上游。
+- 上游仍返回 HTTP 413 / `too much text` 时，立刻 400，不再轮换代理。
