@@ -32,11 +32,14 @@ async fn normalize_and_resolve() {
     assert_eq!(n, "deepseek/deepseek-v4-flash-0731");
     // 未知 → 原样
     assert_eq!(r.normalize("nope/nope").await, "nope/nope");
-    // 解析兜底
+    // 解析兜底（传入可配置 fallbacks）
     assert_eq!(
-        r.resolve("nope/nope").await,
+        r.resolve("nope/nope", &[]).await,
         "deepseek/deepseek-v4-flash-0731"
     );
+    // 自定义 fallback 生效
+    let custom = vec!["z-ai/glm-5.2".to_string()];
+    assert_eq!(r.resolve("nope/nope", &custom).await, "z-ai/glm-5.2");
 }
 
 #[tokio::test]

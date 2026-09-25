@@ -239,13 +239,13 @@ async function loadModels() {
     for (const id of guideIds) { if (!metas[id]) metas[id] = { id }; }
     const ids = Object.keys(metas);
     if (ids.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="empty">暂无模型</td></tr>'; return; }
-    const todo = 'TODO(后端 /api/models 或 /v1/models 补 meta 字段)';
     for (const id of ids) {
       const m = metas[id] || {};
-      const ctx = m.context || m.context_window || '-';
+      const ctx = m.context || (m.context_window ? (m.context_window/1000) + 'k' : '-');
       const price = (typeof m.price_per_mtok === 'number') ? '$' + m.price_per_mtok : (m.price_per_mtok || '-');
-      const tools = (m.tools === true) ? '<span class="badge ok">工具</span>' : (m.tools === false ? '-' : '<span class="badge warn" title="' + todo + '">' + todo + '</span>');
-      const vision = (m.vision === true) ? '<span class="badge ok">视觉</span>' : (m.vision === false ? '-' : '<span class="badge warn" title="' + todo + '">' + todo + '</span>');
+      // 后端 v0.1.7+ 返回真实 tools/vision 布尔；老后端缺字段时按「未知」降级（不再显示假 TODO）
+      const tools = (m.tools === true) ? '<span class="badge ok">工具</span>' : (m.tools === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
+      const vision = (m.vision === true) ? '<span class="badge ok">视觉</span>' : (m.vision === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${id}</td><td>${m.label || m.owned_by || '-'}</td><td>${ctx}</td>` +
         `<td class="num">${price}</td><td>${tools}</td><td>${vision}</td>`;

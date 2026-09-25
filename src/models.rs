@@ -283,18 +283,24 @@ impl ModelRegistry {
     }
 
     /// 降级链：请求模型不在目录/不可用时按 fallback 顺序取
-    pub async fn resolve(&self, requested: &str) -> String {
+    /// fallbacks 来自 config.fallback_models（可配置）；为空时用内置默认
+    pub async fn resolve(&self, requested: &str, fallbacks: &[String]) -> String {
         let norm = self.normalize(requested).await;
         if self.has_model(&norm).await {
             return norm;
         }
-        for fb in [
-            "deepseek/deepseek-v4-flash-0731",
-            "z-ai/glm-5.2",
-            "minimax/minimax-m3",
-        ] {
-            if self.has_model(fb).await {
-                return fb.to_string();
+        let list: Vec<String> = if fallbacks.is_empty() {
+            vec![
+                "deepseek/deepseek-v4-flash-0731".into(),
+                "z-ai/glm-5.2".into(),
+                "minimax/minimax-m3".into(),
+            ]
+        } else {
+            fallbacks.to_vec()
+        };
+        for fb in list {
+            if self.has_model(&fb).await {
+                return fb;
             }
         }
         DEFAULT_MODEL.to_string()
@@ -316,13 +322,25 @@ impl ModelRegistry {
     }
 }
 
-/// OpenAI /v1/models 形状
+/// OpenAI /v1/models 形状（含能力 meta，供 UI 真实展示工具/视觉/上下文/价格）
 #[derive(Serialize, Deserialize)]
 pub struct OpenAIModelObject {
     pub id: String,
     pub object: String,
     pub created: i64,
     pub owned_by: String,
+    /// 展示名
+    pub label: String,
+    /// 上下文窗口数值（token 数）
+    pub context_window: i64,
+    /// 上下文原文（"128k"）
+    pub context: String,
+    /// 每 1M token 输入价（USD）
+    pub price_per_mtok: f64,
+    /// 支持工具调用
+    pub tools: bool,
+    /// 支持图片输入
+    pub vision: bool,
 }
 
 /// Anthropic /v1/models 形状
@@ -343,6 +361,12 @@ pub fn openai_models(list: &[ModelMeta]) -> Vec<OpenAIModelObject> {
             object: "model".into(),
             created: 0,
             owned_by: m.family.clone(),
+            label: m.label.clone(),
+            context_window: m.context_window,
+            context: m.context.clone(),
+            price_per_mtok: m.price_per_mtok,
+            tools: m.tools,
+            vision: m.vision,
         })
         .collect()
 }

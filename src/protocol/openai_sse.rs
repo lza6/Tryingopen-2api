@@ -83,12 +83,12 @@ struct OpenAiTransform {
 }
 
 #[derive(Debug, Clone)]
-struct ToolCallInfo {
-    id: String,
-    name: String,
-    arguments_json: String,
-    preamble: String,
-    rest: String,
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub arguments_json: String,
+    pub preamble: String,
+    pub rest: String,
 }
 
 impl Stream for OpenAiTransform {
@@ -341,7 +341,7 @@ struct Event {
 }
 
 /// 从累积文本检测完整工具调用 JSON（剥 markdown fence、容忍前后缀文本）
-fn detect_tool_call(buf: &str) -> Option<ToolCallInfo> {
+pub fn detect_tool_call(buf: &str) -> Option<ToolCallInfo> {
     let cleaned = strip_fences(buf);
     let mut search = 0usize;
     while search < cleaned.len() {
@@ -401,6 +401,22 @@ fn strip_fences(s: &str) -> &str {
         return rest.strip_suffix("```").unwrap_or(rest).trim();
     }
     t
+}
+
+/// 生成 OpenAI 非流式工具调用 message（标准 tool_calls 数组）
+pub fn nonstream_tool_message(tc: &ToolCallInfo) -> serde_json::Value {
+    serde_json::json!({
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [{
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.name,
+                "arguments": tc.arguments_json
+            }
+        }]
+    })
 }
 
 /// 生成 OpenAI 工具调用增量帧：首帧 role/name + arguments 分块

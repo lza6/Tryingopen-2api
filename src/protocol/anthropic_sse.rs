@@ -332,41 +332,21 @@ fn anthropic_tool_frames(index: usize, tc: &ToolCallInfo) -> Vec<String> {
         })
     );
     out.push(start);
-    for chunk in chunk_str(&tc.arguments_json, 16) {
-        out.push(format!(
-            "event: content_block_delta\ndata: {}\n\n",
-            serde_json::json!({
-                "type":"content_block_delta",
-                "index": index,
-                "delta":{"type":"input_json_delta","partial_json":chunk}
-            })
-        ));
-    }
+    // Anthropic 协议要求 partial_json 是合法 JSON 片段（完整对象或合法后缀），
+    // 前切分块会产生非法 JSON（{"city":"sh）导致 SDK 拼接失败。
+    // 一次性发送完整 arguments（最兼容），超长参数可后续改后缀式分块。
+    out.push(format!(
+        "event: content_block_delta\ndata: {}\n\n",
+        serde_json::json!({
+            "type":"content_block_delta",
+            "index": index,
+            "delta":{"type":"input_json_delta","partial_json":tc.arguments_json}
+        })
+    ));
     out.push(format!(
         "event: content_block_stop\ndata: {}\n\n",
         serde_json::json!({"type":"content_block_stop","index": index})
     ));
-    out
-}
-
-fn chunk_str(s: &str, n: usize) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut cnt = 0usize;
-    for ch in s.chars() {
-        cur.push(ch);
-        cnt += 1;
-        if cnt == n {
-            out.push(std::mem::take(&mut cur));
-            cnt = 0;
-        }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    if out.is_empty() {
-        out.push(String::new());
-    }
     out
 }
 

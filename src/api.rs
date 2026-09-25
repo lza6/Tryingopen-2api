@@ -547,7 +547,10 @@ async fn handle_chat_completions(
         return cb_open_response();
     }
     let created = chrono::Utc::now().timestamp();
-    let model = state.registry.resolve(&body.model).await;
+    let model = state
+        .registry
+        .resolve(&body.model, &state.cfg.fallback_models)
+        .await;
 
     let images = extract_image_parts(&body.messages);
     let tool_mode = body
@@ -604,13 +607,34 @@ async fn handle_chat_completions(
                     Some(&format!("text={} tok", nr.text.chars().count())),
                     start.elapsed(),
                 );
-                let body = crate::protocol::openai_sse_helper::openai_nonstream_full(
-                    &nr.text,
-                    &nr.reasoning,
-                    nr.usage.as_ref(),
-                    &model,
-                    created,
-                );
+                // 非流式工具调用：若上游返回 tool_call JSON → 转标准 tool_calls message
+                let body = if let Some(tc) = crate::protocol::openai_sse::detect_tool_call(&nr.text)
+                {
+                    let message = crate::protocol::openai_sse::nonstream_tool_message(&tc);
+                    serde_json::to_string(&serde_json::json!({
+                        "id": format!("chatcmpl-{}", created),
+                        "object": "chat.completion",
+                        "created": created,
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "message": message,
+                            "finish_reason": "tool_calls"
+                        }],
+                        "usage": nr.usage.clone().unwrap_or(serde_json::json!({
+                            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0
+                        }))
+                    }))
+                    .unwrap_or_default()
+                } else {
+                    crate::protocol::openai_sse_helper::openai_nonstream_full(
+                        &nr.text,
+                        &nr.reasoning,
+                        nr.usage.as_ref(),
+                        &model,
+                        created,
+                    )
+                };
                 Response::builder()
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from(text_body(&body)))
@@ -622,8 +646,9 @@ async fn handle_chat_completions(
             if crate::upstream::is_model_not_found_error(e.message()) {
                 state.registry.mark_offline(&model).await;
             }
-            // 熔断：非限流错误计为失败
-            if !matches!(e, ApiError::RateLimited(_)) {
+            // 熔断：仅上游 5xx 故障计失败；4xx（模型不存在/参数错/限流）不计——
+            // 避免客户端用已下线模型连打把整个上游熔断，正常模型也被 503
+            if e.status().is_server_error() {
                 state.breaker.record_failure();
             }
             let class = if e.status().is_client_error() {
@@ -842,6 +867,9 @@ pub struct AnthropicRequest {
     pub system: Option<serde_json::Value>,
     #[serde(default)]
     pub tools: Option<serde_json::Value>,
+    /// 工具选择（如 {"type":"auto"} / {"type":"any"} / {"type":"tool","name":"x"}）
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
     /// 思考程度（balanced/deep/low 等，上游决定）
@@ -964,7 +992,10 @@ async fn handle_claude_messages(
         );
         return cb_open_response();
     }
-    let model = state.registry.resolve(&body.model).await;
+    let model = state
+        .registry
+        .resolve(&body.model, &state.cfg.fallback_models)
+        .await;
 
     let last_user = body.messages.iter().rev().find(|m| m.role == "user");
     let content = last_user
@@ -997,10 +1028,15 @@ async fn handle_claude_messages(
     let mut up_msgs: Vec<UpstreamMessage> = Vec::new();
     let mut system_texts: Vec<String> = Vec::new();
     if tool_mode {
-        let instr = format!(
+        let mut instr = format!(
             "[TOOL CALLING MODE]\nAvailable tools (JSON): {}\nIf you need to call a tool, respond with ONLY a single JSON object and no other text, no markdown fences: {{\"tool_call\":{{\"name\":\"<exact tool name>\",\"arguments\":{{...}}}}}}",
             body.tools.as_ref().unwrap()
         );
+        if let Some(tc) = &body.tool_choice {
+            if tc.is_object() {
+                instr.push_str(&format!("\nTool choice: {tc}"));
+            }
+        }
         system_texts.push(instr);
     }
     if let Some(sys) = &body.system {
@@ -1133,7 +1169,7 @@ async fn handle_claude_messages(
             if crate::upstream::is_model_not_found_error(e.message()) {
                 state.registry.mark_offline(&model).await;
             }
-            if !matches!(e, ApiError::RateLimited(_)) {
+            if e.status().is_server_error() {
                 state.breaker.record_failure();
             }
             let class = if e.status().is_client_error() {
@@ -1227,8 +1263,14 @@ pub struct ApiKeyAction {
 
 async fn handle_config_api_key(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ApiKeyAction>,
 ) -> Response {
+    // 安全：管理 key 必须携带一个有效 key（防止公网任意生成/清空 key 关闭鉴权）
+    if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        return api_err_response(e);
+    }
+    // clear/set 属于高风险操作：要求带有效 key 且 action=clear 需额外确认（调用方来自面板已带 key）
     let Ok(mut keys) = state.api_keys.write() else {
         return api_err_response(ApiError::internal("锁错误"));
     };
