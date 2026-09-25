@@ -33,7 +33,7 @@
 - `429`（配额耗尽）不计入熔断失败——由代理池轮换处理，不触发熔断
 
 ### /metrics 可观测性（P3）
-- 默认开启：`GET /metrics`（无需鉴权，Prometheus 文本格式 `text/plain; version=0.0.4`）
+- 默认开启：`GET /metrics`（**需 API key**，与 /api/* 一致；空 key 本机模式除外；Prometheus 文本格式 `text/plain; version=0.0.4`）
 - 指标：
   - `tryingopen_requests_total{endpoint,provider,status}` 请求计数（2xx/4xx/429/5xx）
   - `tryingopen_request_duration_seconds_sum/count` 请求耗时

@@ -117,7 +117,9 @@ docker run ... -e LISTEN_ADDR=0.0.0.0:47831 -e UPSTREAM_BASE_URL=https://www.try
 | `UPSTREAM_BASE_URL` | 上游地址 | `https://www.tryingopen.com` |
 | `API_KEYS` | 逗号分隔的 API Key | 空 |
 | `UI_PASSWORD` | Web 面板 Basic Auth 密码（公网务必设置） | 空 |
-| `RATE_LIMIT_ENABLED` / `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SEC` | 每 Key 限流 | 开 / 60 / 3600 |
+| `RATE_LIMIT_ENABLED` / `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SEC` |
+| `RATE_LIMIT_MAX_KEYS` | 限流 map 上限（防无界内存） | 4096 |
+| `DIRECT_FALLBACK_QUOTA` | 直连兜底每窗口配额 | 10 | 每 Key 限流 | 开 / 60 / 3600 |
 | `CIRCUIT_BREAKER_ENABLED` / `CB_FAILURE_THRESHOLD` / `CB_TIMEOUT_SEC` | 上游熔断 | 开 / 5 / 30 |
 | `METRICS_ENABLED` | `/metrics` Prometheus 端点 | 开 |
 

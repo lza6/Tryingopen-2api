@@ -6,7 +6,7 @@ TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开�
 
 **完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每日约 20 次」限流（代理池轮换出口缓解），网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.1+ 增强**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.11（终局第 4 轮）**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -171,6 +171,12 @@ TryingOpen 站点（Next.js + Turbopack，完全匿名）：
 | `max_attempts` | `3` | 最大出口尝试轮数 |
 | `cooldown_map` | `0,15,60,120,300` | 递增冷却秒数 |
 | `direct_fallback` | `true` | 直连兜底 |
+| `direct_fallback_quota` | `10` | 直连兜底每窗口配额（防共享匿名配额打满） |
+| `rate_limit_enabled` / `rate_limit_requests` / `rate_limit_window_sec` | `true`/`60`/`3600` | 每 Key 限流 |
+| `rate_limit_max_keys` | `4096` | 限流 map 上限（防无界内存） |
+| `circuit_breaker_enabled` / `cb_failure_threshold` / `cb_timeout_sec` | `true`/`5`/`30` | 上游熔断 |
+| `metrics_enabled` | `true` | /metrics（需 API key） |
+| `ui_password` | `` | 面板 Basic Auth |
 
 环境变量覆盖：`LISTEN_ADDR` / `UPSTREAM_BASE_URL` / `API_KEYS` / `DEFAULT_MODEL` / `PROXY_FILE` / `FREE_PROXY_ENABLED` / `HOURLY_PER_IP` / `MAX_ATTEMPTS` / `COOLDOWN_MAP` / `DIRECT_FALLBACK` 等。
 
@@ -220,7 +226,7 @@ docs/
 ```
 客户端 → https://try.hwhcie.bond:443
          → nginx (20.204.27.154, sites-enabled/tryingopen)
-         → http://127.0.0.1:47831 (tryingopen2api systemd, v0.1.10)
+         → http://127.0.0.1:47831 (tryingopen2api systemd, v0.1.11)
 ```
 
 - 服务器：`20.204.27.154`（Azure Ubuntu 22.04，nginx 1.18 + systemd）
