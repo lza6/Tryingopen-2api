@@ -83,7 +83,7 @@
 - 动态目录启动/定时同步；已下线模型隐藏
 
 ### GET /healthz
-`{"ok":true,"app":"tryingopen2api","version":"0.1.1","models":N,"proxies":N,"upstream":"..."}`
+`{"ok":true,"app":"tryingopen2api","version": 以实际 /healthz 输出为准,"models":N,"proxies":N,"upstream":"..."}`
 
 ### GET /api/proxies
 `{"total":N,"residential":N,"free":N,"available":N,"cooldown":N,"capacity":{"capacity_total":N,"capacity_used":N,"capacity_remaining":N},"items":[{host_port,source,daily_uses,cooling,cooldown_seconds,fails,health_score,latency_ms}]}`

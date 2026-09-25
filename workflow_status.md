@@ -100,3 +100,33 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 | R3 | /v1/responses 非流式（message / function_call） | ✅ 上线，公网 200 |
 | R4 | /v1/responses 流式事件链 completed 去重 | ✅ 修复，completed 恰好 1 次 |
 | R5 | 工具检测兼容 tool_call / function_call / tool_calls[] | ✅ 增强 |
+
+
+## 终局闭环总审计 第 4 轮（2026-09-26，4 子代理并行 + 分主题修复）
+
+> 审计报告：docs/audit/A4（架构/数据流）、B4（生产安全）、C4（前端/契约）、D4（盲点/文档）
+> 修复批次：Batch-1 安全/日志 → Batch-2 协议正确性 → Batch-3 前端/契约 → Batch-4 文档/CI → Batch-5 验收
+
+| 项 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| T1 | D1 log_request UTF-8 panic | ✅ 修复 | chars 脱敏替换字节切片 + 测试 |
+| T2 | B4 clear 权限反转 | ✅ 修复 | 需 admin_confirm + 静态 key 禁清空 |
+| T3 | B1 /metrics 无鉴权 | ✅ 修复 | 需 api key |
+| T4 | B4 generate 无限自增 | ✅ 修复 | 上限 64 |
+| T5 | B3 直连兜底配额 | ✅ 修复 | direct_fallback_quota 独立限流 |
+| T6 | C MAJOR-1 默认面板 401 | ✅ 修复 | 会话级 key 自举 |
+| T7 | A1 Anthropic 图片重复注入 | ✅ 修复 | 只取当前消息图片 |
+| T8 | A3 Anthropic error 无 message_stop | ✅ 修复 | error 后发 stop_events |
+| T9 | A2 非流式 error 假成功 | ✅ 修复 | 转 502 + 记 metrics |
+| T10 | A8 Anthropic message_start.model 空 | ✅ 修复 | 传真实 model |
+| T11 | A6/A7 截断首条 + Anthropic 截断 | ✅ 修复 | any_oversize 分支 |
+| T12 | C MAJOR-2/3/4/5/6 前端 | ✅ 修复 | fetch 超时/指南实时/价格/表格/转义 |
+| T13 | D3 sqlite 空壳文档 | ✅ 同步 | DOCKER.md 澄清内存会话 |
+| T14 | D4 版本漂移 | ✅ 同步 | INDEX/CHANGELOG/README/API_CONTRACT |
+| T15 | D6 CD 无回滚 + cancel-in-progress | ✅ 修复 | deploy.sh 原子替换+回滚；concurrency false |
+| T16 | B4 MINOR config.json 跟踪 | 🟡 建议 | 推荐移出 git（历史干净，未强制） |
+
+## 验证记录（第 4 轮，防重复）
+- [x] fmt/clippy/44 tests（Batch-1/2/3 后均绿）
+- [x] docs/audit/README.md 审计台账已建
+- [ ] 公网 E2E（Batch-5 统一跑，避免频繁刷上游配额）

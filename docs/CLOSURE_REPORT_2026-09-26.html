@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TryingOpen2API 终局闭环总审计报告 — 第 4 轮（2026-09-26）</title>
+<style>
+:root { --bg:#0b0f14; --card:#131a23; --border:#24303d; --text:#e6edf3; --muted:#8b98a5; --accent:#38bdf8; --ok:#34d399; --warn:#fbbf24; --err:#f87171; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--text); font-family:-apple-system,'Segoe UI',Roboto,'Microsoft YaHei',sans-serif; line-height:1.7; padding:24px; }
+.wrap { max-width:960px; margin:0 auto; }
+h1 { font-size:22px; margin-bottom:6px; }
+h2 { font-size:17px; margin:28px 0 10px; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:6px; }
+h3 { font-size:14px; margin:16px 0 6px; color:var(--text); }
+p, li { font-size:13.5px; color:var(--muted); }
+b { color:var(--text); }
+.tag { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; margin-right:6px; }
+.tag.ok { background:#0c3b2e; color:var(--ok); }
+.tag.warn { background:#3d2f0a; color:var(--warn); }
+.tag.err { background:#3b0f0f; color:var(--err); }
+.card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin:12px 0; }
+table { width:100%; border-collapse:collapse; font-size:13px; margin:10px 0; }
+th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+th { color:var(--muted); font-weight:600; }
+code { background:#1c2530; border:1px solid var(--border); border-radius:4px; padding:1px 6px; font-size:12px; color:#7dd3fc; }
+pre { background:#0d1420; border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:12.5px; line-height:1.6; }
+.quiz { background:var(--card); border:1px solid var(--accent); border-radius:10px; padding:18px; margin-top:20px; }
+.quiz button { background:var(--accent); color:#04121a; border:none; border-radius:6px; padding:6px 16px; cursor:pointer; font-size:13px; font-weight:600; margin-top:10px; }
+.quiz .q { margin:14px 0 4px; font-weight:600; }
+.quiz label { display:block; font-size:13.5px; margin:4px 0; color:var(--muted); cursor:pointer; }
+.quiz .result { margin-top:12px; font-size:14px; font-weight:600; }
+.quiz .correct { color:var(--ok); }
+.quiz .wrong { color:var(--err); }
+.footer { margin-top:40px; color:var(--muted); font-size:12px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>TryingOpen2API 终局闭环总审计 · 第 4 轮</h1>
+<p>日期：2026-09-26 · 基线：<code>main@10f0247</code>（v0.1.10）· 模式：<b>4 只读审计子代理并行 + 主线程复核 + 分主题修复 + 真实验收</b></p>
+
+<h2>一、上下文与直觉（为什么做这轮）</h2>
+<div class="card">
+<p>项目已在<b>生产环境公网部署</b>（Azure + nginx HTTPS + systemd + CD 自动发布）。最终用户/调用方/部署者都会真实接触它。因此本轮不是「再查几个小漏洞」，而是把整个网关当作<b>即将交付的成熟 SaaS</b> 做一次最严格的终局审计：从架构/数据流、生产安全、前端契约/UX、盲点扫描四个正交视角并行审计，每个发现都必须有 <code>文件:行号</code> 证据，修复必须经过真实验收（单测、HTTP 烟测、限流/鉴权实测），而不是嘴上闭环。</p>
+<p>直觉：<b>「看起来能用」和「真实可用」之间隔着大量边界</b>——日志脱敏在多字节 key 上会 panic、非流式接口把上游错误当成功返回、Anthropic 流错误后不给终止事件、面板首次打开默认 401……这些都是真实用户会踩、真实调用方会挂起的坑。</p>
+</div>
+
+<h2>二、审计方法（并行工作流）</h2>
+<div class="card">
+<ul>
+<li><b>子代理 A（架构/数据流）</b>：请求→上游→响应全链路、并发安全、SSE 解析、占位符/死代码 → <code>docs/audit/A4</code></li>
+<li><b>子代理 B（生产安全）</b>：鉴权/SSRF/凭据/限流/DoS/部署面 + git 全历史密钥扫描 → <code>docs/audit/B4</code></li>
+<li><b>子代理 C（前端/契约/UX）</b>：面板 JS 与后端字段逐项核对、假功能、移动端 → <code>docs/audit/C4</code></li>
+<li><b>子代理 D（盲点/文档资产）</b>：未知未知扫描、版本漂移、sqlite 空壳、防重复台账 → <code>docs/audit/D4</code></li>
+<li><b>主线程</b>：复核证据 + 分主题修复（Batch-1~5）+ 门禁/HTTP/协议单测验收</li>
+</ul>
+</div>
+
+<h2>三、做了什么（修复清单与验收）</h2>
+<h3>Batch-1 安全/日志（BLOCKER 级）</h3>
+<table>
+<tr><th>项</th><th>问题</th><th>修复</th><th>验收</th></tr>
+<tr><td>D1</td><td>日志脱敏字节切片 → 多字节 key 远程 panic（DoS）</td><td>改为按 char 脱敏</td><td>TCP 手工发多字节 Bearer → <b>401 正常</b>，服务不崩</td></tr>
+<tr><td>B4</td><td>任一有效 key 可清空全部 key → 关闭鉴权</td><td>clear 需 <code>admin_confirm:true</code> + 静态 key 禁清空</td><td>HTTP 实测：无 confirm=400，带 confirm=200</td></tr>
+<tr><td>B1</td><td>/metrics 无鉴权暴露运营面</td><td>需 api key</td><td>带 key 200 / 空 key 本机模式放行（语义正确）</td></tr>
+<tr><td>B3</td><td>直连兜底共享匿名配额，单 key 可打满</td><td><code>direct_fallback_quota</code> 独立限流</td><td>config 默认 10/窗口 + 单测</td></tr>
+<tr><td>M4</td><td>限流 map 无界增长</td><td><code>rate_limit_max_keys</code> 上限 4096</td><td>prod_guard 单测</td></tr>
+<tr><td>面板</td><td>默认配置下面板首次打开 401</td><td>会话级 key 自举注入</td><td>HTTP 实测：面板 HTML 含 <code>sk-to-session-</code></td></tr>
+</table>
+
+<h3>Batch-2 协议正确性</h3>
+<table>
+<tr><th>项</th><th>问题</th><th>修复</th><th>验收</th></tr>
+<tr><td>A1</td><td>Anthropic 图片被重复注入每个 user 消息</td><td>只取当前消息自己的图片</td><td>代码级修复 + 测试</td></tr>
+<tr><td>A3</td><td>上游 error 事件后无 message_stop，客户端挂起</td><td>error 后发 message_delta+message_stop</td><td>新增单测 <code>anthropic_error_event_emits_message_stop</code> 通过</td></tr>
+<tr><td>A2</td><td>非流式 error 事件被当 200 成功返回（假成功）</td><td>collect_nonstream 捕获 → 三协议转 502 + 记 metrics</td><td>代码级 + 编译/测试</td></tr>
+<tr><td>A8</td><td>Anthropic message_start.model 空串（调用方丢 model）</td><td>透传真实 model</td><td>单测 <code>anthropic_start_event_has_model</code> 通过</td></tr>
+<tr><td>A6/A7</td><td>首条超长不截断；Anthropic 路径无截断</td><td>any_oversize 分支 + Anthropic 组装后统一 truncate</td><td>测试覆盖</td></tr>
+</table>
+
+<h3>Batch-3 前端/契约（面板重写）</h3>
+<table>
+<tr><th>项</th><th>修复</th></tr>
+<tr><td>MAJOR-1</td><td>面板补 API Key 管理 UI（生成/清空，二次确认）</td></tr>
+<tr><td>MAJOR-2</td><td>fetch 10s 超时（AbortController）+ 刷新失败保留旧数据</td></tr>
+<tr><td>MAJOR-3</td><td>接入指南改调 <code>/api/guide</code> 实时渲染真实地址/模型/key</td></tr>
+<tr><td>MAJOR-4/5/6</td><td>价格「$0→免费」、health_score 兜底、colspan 8、44 源文案</td></tr>
+<tr><td>MINOR</td><td>XSS 转义（esc）、按钮防连点、a11y aria-selected、toast 队列</td></tr>
+</table>
+
+<h3>Batch-4 文档/CI/配置</h3>
+<table>
+<tr><th>项</th><th>修复</th></tr>
+<tr><td>版本漂移</td><td>README/API_CONTRACT/DEPLOYMENT_SOP/DOCKER 版本示例统一为运行时为准；CHANGELOG 补 0.1.3-0.1.10</td></tr>
+<tr><td>sqlite 空壳</td><td>DOCKER.md 澄清「会话为内存态，sqlite/telemetry 预留」</td></tr>
+<tr><td>INDEX</td><td>补 DOCKER/NGINX/SERVER_DEPLOYMENT/audit 台账</td></tr>
+<tr><td>CD 安全</td><td><code>cancel-in-progress:false</code> + deploy.sh 原子替换+失败自动回滚</td></tr>
+<tr><td>config</td><td>config.example 补新字段；docker-compose 加 healthcheck + 内存限制</td></tr>
+<tr><td>台账</td><td>新建 <code>docs/audit/README.md</code> 审计台账（防重复验证）</td></tr>
+</table>
+
+<h2>四、真实验收结果</h2>
+<div class="card">
+<table>
+<tr><th>验收</th><th>结果</th></tr>
+<tr><td>cargo fmt / clippy -D warnings</td><td>✅ 通过</td></tr>
+<tr><td>cargo test（lib+tests）</td><td>✅ 46 passed（27 单测 + 11 模型 + 8 代理池）</td></tr>
+<tr><td>release 构建</td><td>✅ 3m16s 成功</td></tr>
+<tr><td>本地 HTTP 烟测：healthz / 面板会话 key / /v1/models 401</td><td>✅ 200 / True / 401</td></tr>
+<tr><td>限流 429（rate_limit_requests=5）</td><td>✅ req1-5=200，req6-8=429</td></tr>
+<tr><td>/metrics 带 key / clear 二次确认 / generate</td><td>✅ 200 / 400→200 / ok</td></tr>
+<tr><td>UTF-8 多字节 key（D1）</td><td>✅ 401 不 panic，服务存活</td></tr>
+</table>
+<p class="tag warn">说明</p><p>公网全链路 E2E（healthz/chat/Anthropic/responses/429/503/metrics）上一轮 P6 已于 2026-09-25 公网实测完成；本轮修复以单元/HTTP 烟测收口。公网 E2E 如需复跑请确认已配置 api_keys 的生产 config（避免匿名模式无鉴权态下误测）。</p>
+</div>
+
+<h2>五、变更文件</h2>
+<div class="card">
+<pre>
+ M .github/scripts/deploy.sh          CD 原子替换+回滚
+ M .github/workflows/cd-deploy.yml    concurrency 防打断
+ M CHANGELOG.md                       补 0.1.3-0.1.10
+ M README.md                          44 源/12+模型/每日限流口径
+ M config.example.json                rate_limit_max_keys/direct_fallback_quota
+ M docker-compose.yml                 healthcheck + 内存限制
+ M docs/API_CONTRACT.md               version 示例
+ M docs/DEPLOYMENT_SOP.md             版本/每日口径
+ M docs/DOCKER.md                     sqlite 空壳澄清
+ M docs/INDEX.md                      补全索引
+ M src/api.rs                         鉴权/配额/断 error/图片去重/面板 key
+ M src/config.rs                      新配置字段
+ M src/main.rs                        direct_quota
+ M src/prod_guard.rs                  限流上限/尾部语义
+ M src/protocol/anthropic_sse.rs      error→stop_events/model
+ M src/web.rs                         面板重写
+ M workflow_status.md                 第 4 轮记录
+?? TASKS-2026-09-26.md                本轮任务清单
+?? docs/audit/A4/B4/C4/D4             四份审计报告
+?? docs/audit/README.md               审计台账
+</pre>
+</div>
+
+<h2>六、仍未完成 / 需你决定的项</h2>
+<div class="card">
+<ul>
+<li><span class="tag warn">待定</span><b>F9 凭据历史重写</b>：git 历史无真实凭据，但如需彻底抹除 docs 历史文件，需 filter-repo/BFG（破坏性，需你授权）。</li>
+<li><span class="tag warn">建议</span><b>config.json 移出 git</b>：当前被跟踪（内容为空 key 无害），建议后续改为仅 config.example.json + 环境变量。</li>
+<li><span class="tag warn">建议</span><b>A5 并发许可释放时机</b>：当前 gate 在响应头到达即释放（SSE 长流不占并发槽），属设计权衡，已记录未改。</li>
+<li><span class="tag warn">运维</span>公网建议：Azure NSG 只留 443/22 收紧、SSH 改 key-only、47831 仅 nginx 回环。</li>
+</ul>
+</div>
+
+<h2>七、变更测验（你必须通过）</h2>
+<div class="quiz" id="quiz">
+<p style="color:var(--muted);font-size:12px">共 8 题，作答后点「交卷」。全对 = 你已真正理解这次变更。</p>
+<div class="q">1. 为什么日志脱敏要按 char 而不是按字节切片？</div>
+<label><input type="radio" name="q1" value="a"> 字节更快</label>
+<label><input type="radio" name="q1" value="b"> 多字节 UTF-8 key 会在字节边界切进字符中间导致 panic</label>
+<label><input type="radio" name="q1" value="c"> 因为 API key 一定是 ASCII</label>
+
+<div class="q">2. 现在清空全部动态 key 需要什么条件？</div>
+<label><input type="radio" name="q2" value="a"> 任意有效 key + action=clear</label>
+<label><input type="radio" name="q2" value="b"> 有效 key + admin_confirm:true，且未配置静态 api_keys</label>
+<label><input type="radio" name="q2" value="c"> 任何匿名请求</label>
+
+<div class="q">3. /metrics 现在需要什么才能访问？</div>
+<label><input type="radio" name="q3" value="a"> 无需任何鉴权</label>
+<label><input type="radio" name="q3" value="b"> 有效 api key（Bearer/x-api-key）；空 key 本机模式除外</label>
+<label><input type="radio" name="q3" value="c"> UI 密码</label>
+
+<div class="q">4. 默认配置（api_keys 为空）下面板首次打开为什么会自己好？</div>
+<label><input type="radio" name="q4" value="a"> 面板会创建一个会话级 key 注入前端</label>
+<label><input type="radio" name="q4" value="b"> 什么都不用做</label>
+<label><input type="radio" name="q4" value="c"> 需要手工生成 key</label>
+
+<div class="q">5. Anthropic 流式请求收到上游 error 事件后，网关现在会怎么做？</div>
+<label><input type="radio" name="q5" value="a"> 直接断开流</label>
+<label><input type="radio" name="q5" value="b"> 发错误文本 + message_delta + message_stop（正常终止让客户端不挂起）</label>
+<label><input type="radio" name="q5" value="c"> 返回 500</label>
+
+<div class="q">6. 非流式请求上游返回 SSE error 事件，之前/现在行为差异？</div>
+<label><input type="radio" name="q6" value="a"> 之前 200 假成功；现在转 502 + 记 metrics</label>
+<label><input type="radio" name="q6" value="b"> 之前 500；现在 200</label>
+<label><input type="radio" name="q6" value="c"> 无差异</label>
+
+<div class="q">7. Anthropic 多图消息之前有什么 bug？</div>
+<label><input type="radio" name="q7" value="a"> 图片丢失</label>
+<label><input type="radio" name="q7" value="b"> 每个 user 消息都被注入全对话的所有图片（重复）</label>
+<label><input type="radio" name="q7" value="c"> 图片顺序颠倒</label>
+
+<div class="q">8. CD 部署现在如何防止「取消导致服务停在停止态」？</div>
+<label><input type="radio" name="q8" value="a"> cancel-in-progress:false + 原子替换 + 失败自动回滚</label>
+<label><input type="radio" name="q8" value="b"> 部署前备份数据库</label>
+<label><input type="radio" name="q8" value="c"> 不允许覆盖二进制</label>
+
+<button onclick="grade()">交卷</button>
+<div class="result" id="result"></div>
+</div>
+
+<div class="footer">TryingOpen2API 终局闭环总审计 · 第 4 轮报告 · 由 4 审计子代理 + 主线程协作完成 · 2026-09-26</div>
+</div>
+<script>
+function grade() {
+  const ans = { q1:'b', q2:'b', q3:'b', q4:'a', q5:'b', q6:'a', q7:'b', q8:'a' };
+  let score = 0, total = Object.keys(ans).length;
+  for (const [q, a] of Object.entries(ans)) {
+    const sel = document.querySelector(`input[name="${q}"]:checked`);
+    if (sel && sel.value === a) score++;
+  }
+  const el = document.getElementById('result');
+  if (score === total) {
+    el.className = 'result correct';
+    el.textContent = `满分 ${score}/${total}！你已经真正理解这次变更。✅`;
+  } else {
+    el.className = 'result wrong';
+    el.textContent = `${score}/${total}，请回到上文对应章节再读一遍（重点红色/黄色标注项），然后重试。`;
+  }
+}
+</script>
+</body>
+</html>

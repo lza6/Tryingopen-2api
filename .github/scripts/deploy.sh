@@ -32,17 +32,36 @@ if [ ! -f /root/tryingopen-2api-cd/target/release/tryingopen2api ]; then
   exit 1
 fi
 
-echo "[4/5] deploy"
+echo "[4/5] deploy (atomic with rollback)"
 BIN=/root/tryingopen-2api-cd/target/release/tryingopen2api
 ls -la "$BIN"
-systemctl stop tryingopen2api
-sleep 1
 mkdir -p /opt/tryingopen2api/data /opt/tryingopen2api/bin
-cp -f "$BIN" /opt/tryingopen2api/bin/tryingopen2api
-chmod +x /opt/tryingopen2api/bin/tryingopen2api
+# 保留上一版二进制以便回滚
+if [ -f /opt/tryingopen2api/bin/tryingopen2api ]; then
+  cp -f /opt/tryingopen2api/bin/tryingopen2api /opt/tryingopen2api/bin/tryingopen2api.prev
+fi
+cp -f "$BIN" /opt/tryingopen2api/bin/tryingopen2api.new
+chmod +x /opt/tryingopen2api/bin/tryingopen2api.new
+# 原子替换：新版本先就位再启动，失败了回滚旧版
+systemctl stop tryingopen2api || true
+sleep 1
+mv -f /opt/tryingopen2api/bin/tryingopen2api.new /opt/tryingopen2api/bin/tryingopen2api
 systemctl start tryingopen2api
 sleep 5
 
 echo "[5/5] verify"
-curl -sS -m 10 http://127.0.0.1:47831/healthz
-echo "CD_DEPLOY_OK"
+if curl -sS -m 10 http://127.0.0.1:47831/healthz; then
+  echo "CD_DEPLOY_OK"
+else
+  echo "CD_DEPLOY_FAILED_HEALTHZ"
+  # 回滚到上一版
+  if [ -f /opt/tryingopen2api/bin/tryingopen2api.prev ]; then
+    systemctl stop tryingopen2api || true
+    mv -f /opt/tryingopen2api/bin/tryingopen2api.prev /opt/tryingopen2api/bin/tryingopen2api
+    chmod +x /opt/tryingopen2api/bin/tryingopen2api
+    systemctl start tryingopen2api
+    sleep 3
+    curl -sS -m 10 http://127.0.0.1:47831/healthz && echo "CD_ROLLED_BACK" || echo "CD_ROLLBACK_FAILED"
+  fi
+  exit 1
+fi

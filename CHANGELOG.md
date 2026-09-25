@@ -1,3 +1,9 @@
+## 0.1.3-0.1.10 (2026-09-24~26) — 终局闭环系列修复
+
+- v0.1.10：OpenAI 工具调用多轮往返修复、/v1/responses（流式+非流式）、上游 413 截断短路
+- v0.1.9：session map 无界增长清理、redact_logs 真实接入、capacity 口径修正、Dockerfile + CD 全自动部署
+- v0.1.8：Dockerfile 化 + CI/CD 全自动部署流水线（release 到 GitHub）
+- v0.1.3-0.1.7：Anthropic 非流式工具调用、SSRF 纵深、限流/熔断/metrics、docs 同步、免费代理后台刷新等
 ## 0.1.2 (2026-09-24) — 终局闭环审计修复
 
 - 修复免费代理后台周期刷新失效（watch channel → 无限循环）

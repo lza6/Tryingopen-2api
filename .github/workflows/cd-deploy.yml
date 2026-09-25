@@ -23,7 +23,7 @@ env:
 
 concurrency:
   group: cd-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false  # 防取消导致 systemd 停在停止态
 
 jobs:
   deploy:

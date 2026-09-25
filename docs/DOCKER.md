@@ -1,6 +1,6 @@
 # TryingOpen2API Docker 部署指南
 
-> 适用版本：tryingopen2api 0.1.7（Rust/axum，端口 47831）。
+> 适用版本：tryingopen2api（当前版本以 /healthz 或 Cargo.toml 为准）（Rust/axum，端口 47831）。
 > 交付文件：`Dockerfile`、`.dockerignore`、`docker-compose.yml`、本指南。
 
 ## 1. 交付内容与设计要点
@@ -20,7 +20,7 @@
 - **runtime 阶段**：`debian:bookworm-slim`，只装 `ca-certificates`（HTTPS 出站需要），创建非 root 用户 `appuser`，只拷贝 `target/release/tryingopen2api` 一个文件。
 - **配置与数据**：项目没有默认内置 config（用 `--config` 参数），容器默认执行
   `ENTRYPOINT ["/app/tryingopen2api"]` + `CMD ["--config", "/app/config.json"]`，
-  config 由卷挂载，不打进镜像；`/app/data` 挂载持久化 sqlite/telemetry/proxies。
+  config 由卷挂载，不打进镜像；`/app/data` 挂载持久化 `proxies.txt`；**会话为内存态**，重启即清；sqlite/telemetry 为预留字段，当前版本不写库。
 - 不需要 `CARGO_NET_GIT_FETCH_WITH_CLI`，本项目没有 git 依赖，也不使用 cross。
 
 ## 2. 前置条件
@@ -31,7 +31,7 @@
   | 文件 | 说明 |
   |---|---|
   | `config.json` | 服务配置，必须把 `listen_addr` 改为 `0.0.0.0:47831`（否则容器内只监听 127.0.0.1，宿主机无法访问） |
-  | `data/` 目录 | 存放 `proxies.txt`，以及运行后生成的 `tryingopen2api.sqlite`、`telemetry.sqlite` |
+  | `data/` 目录 | 存放 `proxies.txt`；`sqlite/telemetry` 为预留，当前不生成 |
 
   `config.json` 未提供时，把仓库 `config.example.json` 复制为 `config.json` 并按需修改：
 
@@ -102,9 +102,9 @@ docker run ... -e LISTEN_ADDR=0.0.0.0:47831 -e UPSTREAM_BASE_URL=https://www.try
 
 - `./data` 挂载到 `/app/data`，保存：
   - `data/proxies.txt`（代理池文件）
-  - `data/tryingopen2api.sqlite`（会话等 sqlite 数据）
-  - `data/telemetry.sqlite`（遥测）
-- 容器重建/升级后数据保留在宿主机 `./data`，**升级前建议备份 sqlite 文件**。
+  - `data/`（proxies.txt；sqlite 预留，当前不写）
+  - （无；遥测走 /metrics 内存计数）
+- 容器重建/升级后 proxies.txt 保留在宿主机 `./data`；配置在 `config.json`（卷挂载），**升级前建议备份 `config.json` 与 `data/proxies.txt`**；会话数据在内存中，重启即清空。
 - 想换目录：把 compose 里的 `./data` 改为 `/绝对/路径/数据目录`，或换成 named volume（此时 sqlite 等文件名不变，数据仍在 volume 内）。
 
 ### 5.3 常见环境变量（程序内 `src/config.rs` 支持）
@@ -145,7 +145,7 @@ docker logs --tail 50 tryingopen2api
 
 ## 7. 升级步骤（无数据丢失）
 
-1. 备份数据：
+1. 备份数据（config.json + data/proxies.txt；sqlite 预留无实际数据）：
 
    ```bash
    cp -r data "data.bak-$(date +%Y%m%d%H%M%S)"
@@ -178,5 +178,5 @@ docker logs --tail 50 tryingopen2api
 - **宿主机访问不到 47831**：`config.json` 的 `listen_addr` 必须为 `0.0.0.0:47831`（或 `LISTEN_ADDR=0.0.0.0:47831`）。
 - **HTTPS 失败 / CA 错误**：runtime 已装 `ca-certificates`；若仍报证书错，检查容器时间与代理环境。
 - **构建失败找不到 `cc`**：builder 已装 `build-essential`；若改了 Cargo.toml 引入 native 依赖，需按报错补 `pkg-config`/对应 dev 包。
-- **数据未持久化**：确认 compose 的 `./data:/app/data` 挂载存在，且 config 里 sqlite 路径为相对路径 `data/...`（默认）。
+- **数据未持久化**：确认 compose 的 `./data:/app/data` 挂载存在。
 - **权限**：非 root 用户 `appuser` 需要能写 `/app/data`；使用宿主机目录挂载时，如遇权限拒绝可 `chmod -R 777 data` 或改用 named volume。

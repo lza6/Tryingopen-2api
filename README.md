@@ -2,11 +2,11 @@
 
 > Rust(axum) 版。上游协议逆向笔记: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 
-TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开源模型（13+）逆向为 **OpenAI 兼容**与 **Anthropic 兼容** 的本地 API 网关。单二进制、零外部依赖，可在任意 OpenAI/Claude 客户端（Claude Code、Codex、Cursor、LobeChat、NextChat 等）中使用 TryingOpen 免费模型。
+TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开源模型（内置 12 个 + 动态目录）逆向为 **OpenAI 兼容**与 **Anthropic 兼容** 的本地 API 网关。单二进制、零外部依赖，可在任意 OpenAI/Claude 客户端（Claude Code、Codex、Cursor、LobeChat、NextChat 等）中使用 TryingOpen 免费模型。
 
 **完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每日约 20 次」限流（代理池轮换出口缓解），网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.1 增强**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.1+ 增强**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -114,7 +114,7 @@ API Key:  sk-local（或面板生成）
 
 ## 四、代理池（核心能力）
 
-- **双源**：住宅代理文件（`data/proxies.txt`，每行一个 `http://user:pass@host:port`，优先）+ 免费代理（13 个公开源后台抓取，量大兜底）
+- **双源**：住宅代理文件（`data/proxies.txt`，每行一个 `http://user:pass@host:port`，优先）+ 免费代理（44 个公开源后台抓取，量大兜底）
 - **每 IP 限流语义**：按 `hourly_per_ip`（默认 20）控制每个出口的使用次数；24h 窗口重置
 - **故障轮换**：429 / 网络错误 → `mark_failure` 冷却该出口 + 健康分 EWMA 下调 + 指数退避（2s/4s/8s）→ 下一轮换新出口
 - **优先策略**：24h 内未用过的 IP 优先；全部用过一轮后按健康分 + 冷却最早结束排序
@@ -179,7 +179,7 @@ TryingOpen 站点（Next.js + Turbopack，完全匿名）：
 ## 八、测试
 
 ```bash
-cargo test   # 8 个单元测试：模型目录/归一化/解析、代理池冷却/轮换/脱敏、免费代理解析
+cargo test   # 44 个测试：模型/协议/代理池/限流/熔断/metrics 等
 ```
 
 > 注：本机 rustdoc.exe 缺失导致 `cargo test --doc` 失败（chocolatey 安装问题），与代码无关；`cargo test --lib` / `cargo test --tests` 全部通过。

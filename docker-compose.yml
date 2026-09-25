@@ -17,4 +17,14 @@ services:
     environment:
       # 日志级别；更多覆盖项见 docs/DOCKER.md 环境变量表
       RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:47831/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     restart: unless-stopped

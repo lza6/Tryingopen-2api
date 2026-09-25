@@ -26,5 +26,7 @@
   "circuit_breaker_enabled": true,
   "cb_failure_threshold": 5,
   "cb_timeout_sec": 30,
-  "metrics_enabled": true
+  "metrics_enabled": true,
+  "rate_limit_max_keys": 4096,
+  "direct_fallback_quota": 10
 }
