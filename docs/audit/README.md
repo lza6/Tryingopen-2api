@@ -15,13 +15,14 @@
 | F1-F10 | 终局审计修复 | ✅ 完成（F9 凭据历史重写待用户授权；F10 见 B1 已修） | workflow_status.md | 2026-09-25 |
 | S1-S4 | 终局第三轮 | ✅ 完成 | workflow_status.md | 2026-09-25 |
 | R1-R5 | v0.1.10 工具/Responses | ✅ 完成 | workflow_status.md | 2026-09-25 |
-| **A4** | 架构/数据流（第 4 轮） | 🟡 修复中（Batch-2） | docs/audit/A4-architecture-dataflow.md | 2026-09-26 |
-| **B4** | 生产安全/加固（第 4 轮） | 🟡 修复中（Batch-1/3） | docs/audit/B4-security-hardening.md | 2026-09-26 |
-| **C4** | 前端/契约/UX（第 4 轮） | 🟡 修复中（Batch-3） | docs/audit/C4-frontend-contract.md | 2026-09-26 |
-| **D4** | 盲点/文档资产（第 4 轮） | 🟡 修复中（Batch-4） | docs/audit/D4-blindsight-docs.md | 2026-09-26 |
-| E2E-2026-09-26 | 公网无 key 探活 + 安全拒绝（v0.1.11） | 🟡 部分（带 key 待补） | docs/audit/E2E-2026-09-26.md | 2026-09-26 |
+| **A4** | 架构/数据流（第 4 轮） | ✅ 已修（v0.1.11） | docs/audit/A4-architecture-dataflow.md | 2026-09-26 |
+| **B4** | 生产安全/加固（第 4 轮） | ✅ 已修（v0.1.11） | docs/audit/B4-security-hardening.md | 2026-09-26 |
+| **C4** | 前端/契约/UX（第 4 轮） | ✅ 已修（v0.1.11） | docs/audit/C4-frontend-contract.md | 2026-09-26 |
+| **D4** | 盲点/文档资产（第 4 轮） | ✅ 已修（v0.1.11） | docs/audit/D4-blindsight-docs.md | 2026-09-26 |
+| E2E-2026-09-26 | 公网无 key 探活 + 安全拒绝（v0.1.11） | ✅ 通过（带 key 项由本地 E2E 补足） | docs/audit/E2E-2026-09-26.md | 2026-09-26 |
 | E2E-local-2026-09-26 | 本地完整带 key E2E（真实上游，v0.1.11） | ✅ 11 PASS + 2 EXPECTED | docs/audit/E2E-local-2026-09-26.md | 2026-09-26 |
 | RELEASE-VERIFY-2026-09-26 | Release v0.1.11 资产/SHA256/工作流/公网版本核对 | ✅ 通过 | docs/audit/RELEASE-VERIFY-2026-09-26.md | 2026-09-26 |
+| FINAL-GAP-2026-09-26 | 交付前末段缺口审计 | ✅ 已修（M-1..M-6）+ 测试补强 | docs/audit/FINAL-GAP-2026-09-26.md | 2026-09-26 |
 
 ## 已验证（无需重复跑，除非改动涉及）
 - 依赖：cargo audit 本地 advisory-db（1269 条）扫 243 依赖 0 已知漏洞（2026-09-26）。如 Cargo.lock 变更需重跑。

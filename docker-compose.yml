@@ -12,7 +12,7 @@ services:
     volumes:
       # 配置只读挂载（宿主机 config.json -> 容器 /app/config.json）
       - ./config.json:/app/config.json:ro
-      # 数据持久化（sqlite 会话/遥测、proxies.txt），可改名 ./data 为任意宿主机目录
+      # 数据持久化（proxies.txt；会话为内存态），可改名 ./data 为任意宿主机目录
       - ./data:/app/data
     environment:
       # 日志级别；更多覆盖项见 docs/DOCKER.md 环境变量表

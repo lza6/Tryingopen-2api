@@ -11,12 +11,14 @@ src/
 ├── models.rs        # 模型目录（12 静态 + 动态同步）+ 归一化/降级
 ├── upstream.rs      # TryingOpen HTTP 客户端（/api/open 对话 + 目录抓取）
 ├── proxy_pool.rs    # 代理池（住宅+免费双源，冷却/轮换/健康分/粘滞）
-├── free_proxy.rs    # 免费代理抓取器（13 源 + 公网 IP 过滤 + TCP 预检）
+├── free_proxy.rs    # 免费代理抓取器（44 源 + 公网 IP 过滤 + TCP 预检）
+├── prod_guard.rs   # 生产保护：限流/熔断/metrics
 ├── session.rs       # 会话绑定（下游线程 ↔ 模型）
 ├── errors.rs        # OpenAI/Anthropic 兼容错误
 ├── web.rs           # 内置控制面板（单 HTML）
 └── protocol/
-    ├── openai_sse.rs      # 上游 SSE → OpenAI SSE
+    ├── responses.rs    # /v1/responses 桥接
+├── openai_sse.rs      # 上游 SSE → OpenAI SSE
     ├── anthropic_sse.rs   # 上游 SSE → Anthropic SSE
     └── stream.rs          # reqwest bytes → tokio AsyncRead 适配
 tests/
@@ -51,7 +53,7 @@ tests/
 
 ## 免费代理抓取
 
-- 13 个公开源（proxyscrape / geonode / proxifly / thespeedx / ercindedeoglu / proxy4parsing / monosans）
+- 44 个公开源（proxyscrape / geonode / proxifly / thespeedx 等；单轮预检注入上限 4500，池随活性清退）
 - 公网 IP 白名单过滤（拒绝内网/回环/保留/组播）
 - TCP 连通性预检（3s 超时）
 - 注入超 3h 且 30min 未用自动剔除
@@ -62,4 +64,4 @@ tests/
 
 ## 测试
 
-`cargo test --tests`：8 个单元测试（模型目录、归一化、上下文解析、代理池冷却/轮换/脱敏、免费代理解析）。
+`cargo test --lib --tests`：46 个测试（模型目录/归一化、协议 SSE 转换、代理池冷却/轮换/脱敏、限流/熔断/metrics、日志脱敏等）。

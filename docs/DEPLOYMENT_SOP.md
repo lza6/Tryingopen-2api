@@ -55,7 +55,7 @@ start /b target/release/tryingopen2api.exe --config config.json > server.log 2>&
   - `TryingOpen 上游调用失败（已轮换 N 个出口 + 直连兜底）` → 全出口失败（需关注）
 
 ## 6. 容量语义（生产关键）
-- 每 IP 每日约 20 次（上游，UTC 24h 窗口）；代理池自动轮换出口
+- 每 24h UTC 日约 20 次（上游）；代理池自动轮换出口
 - `capacity_remaining = 可用代理数 × 20 − 已用`；UI 实时显示
 - 直连兜底消耗本机 IP 配额；高并发优先保证代理池健康
 

@@ -1,7 +1,7 @@
 # Workflow Status — TryingOpen2API 终局闭环总审计
 
-> 更新：2026-09-24（终局闭环）
-> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.6+，CI 全绿）
+> 更新：2026-09-26（v0.1.11 已发布，终局第 4 轮闭环）
+> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.11 已发布，CI/CD 全绿）
 
 ## 产品定位
 TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
@@ -78,7 +78,7 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 | F7 | Anthropic partial_json 非法分块 | ✅ 修复 | 一次发送完整合法 JSON arguments（Anthropic SDK 兼容） |
 | F8 | 文档过度声称 | ✅ 同步 | README/config.example/API_CONTRACT 修正：每日限流语义、44源/4500截断、free_proxy 默认 true、非流工具调用说明 |
 | F9 | 生产凭据泄漏 git 历史 | ⚠️ 需用户确认 | docs/SERVER_DEPLOYMENT.md 已脱敏为占位符；历史重写（filter-repo/BFG）需用户授权 |
-| F10 | /metrics + /healthz 鉴权 | 🟡 待定 | 生产可考虑限内网或加 key（当前 healthz 无敏感字段，metrics 暴露规模） |
+| F10 | /metrics + /healthz 鉴权 | ✅ 已定 | /metrics 已加 key 鉴权（B1）；/healthz 保持无鉴权（仅探活，无敏感字段，设计如此） |
 
 
 ## 终局闭环第三轮（2026-09-25，v0.1.9）

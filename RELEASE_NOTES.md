@@ -1,20 +1,14 @@
-# TryingOpen2API v0.1.0
+# TryingOpen2API 发布说明
 
-Rust (axum) 版 TryingOpen 免费模型 OpenAI / Anthropic 兼容本地 API 网关。单二进制、零外部依赖，可对接 Claude Code、Codex、Cursor、LobeChat、NextChat 等任意 OpenAI/Claude 客户端。
+> 当前版本：v0.1.12（终局闭环第 4 轮）· 仓库 main 分支
+> 完整变更历史见 [CHANGELOG.md](CHANGELOG.md)；详细协议/部署见 docs/INDEX.md。
 
-## 主要特性
-- **匿名网关**：`POST /api/open` 匿名 SSE（reasoning/text 增量），无需 Cookie / 登录 / API Key
-- **代理池故障轮换**：住宅代理文件 + 免费代理抓取（13 源）双源；429 冷却、出口轮换、健康分、粘滞、直连兜底
-- **OpenAI / Anthropic 双协议桥接**：`/v1/chat/completions` 与 `/v1/messages` 双向转换，内置控制面板 `/ui`
-- **动态模型目录**：12 个静态兜底 + 启动/定时抓取上游 JS chunk 刷新为当前在线模型（2026-09-24 实测 24 个）
-- **随附证据**：抓包 HAR 与站点 JS 位于 `源代码、网络数据包/`；协议逆向笔记见 `docs/PROTOCOL.md`
+## v0.1.11（2026-09-26）
 
-## 快速开始
-1. 运行：`tryingopen2api.exe --config config.json`，默认监听 `http://127.0.0.1:47831`
-2. OpenAI 兼容客户端：Base URL `http://127.0.0.1:47831/v1`，API Key `sk-local`（未配置 api_keys 时任意填写）
-3. Claude Code：`ANTHROPIC_BASE_URL=http://127.0.0.1:47831`、`ANTHROPIC_API_KEY=sk-local`
-4. 可选：编辑 `config.json` 开启免费代理抓取（`free_proxy_enabled: true`）或填写住宅代理文件 `data/proxies.txt`
+- 安全：日志脱敏按 char（修多字节 key panic DoS）；`clear` 需二次确认；`/metrics` 加鉴权；直连兜底配额；限流 map 上限
+- 协议：Anthropic error 后 message_stop；start_event 携带 model；图片去重；Anthropic 长度截断；非流式 error → 502
+- 前端：面板重写（API Key UI / fetch 超时 / 指南实时 / 表格兜底 / XSS 转义）
+- 发布：CD 原子替换+回滚；compose healthcheck；config.local.json 覆盖通道
+- 验收：本地完整带 key E2E（真实上游 11 PASS + 2 EXPECTED）；Release 资产 SHA256 三方一致；公网 version=0.1.11
 
-## 校验
-- 资产 `tryingopen2api.exe` SHA-256：`D3E42268AD1B89FE9B881A7CEB8BC15E7E0C5E3C2E04D9C4AE41503580F6A87D`
-- 单元测试：`cargo test --lib` / `cargo test --tests` 全部通过
+校验：`Get-FileHash tryingopen2api.exe -Algorithm SHA256`

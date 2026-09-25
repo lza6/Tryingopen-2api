@@ -2,7 +2,7 @@
 FROM rust:1.85-bookworm AS builder
 WORKDIR /build
 
-# rusqlite bundled 需要 C 编译器；reqwest 用 rustls-tls，不装系统 openssl
+# 无 C 编译依赖（纯 Rust 依赖）；reqwest 用 rustls-tls，不装系统 openssl
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         pkg-config \
@@ -31,7 +31,7 @@ WORKDIR /app
 
 COPY --from=builder /build/target/release/tryingopen2api /app/tryingopen2api
 
-# 数据（sqlite/telemetry/proxies）与 config 均由 volume 挂载，镜像内不内置
+# 数据（proxies.txt（会话内存态））与 config 均由 volume 挂载，镜像内不内置
 VOLUME ["/app/data"]
 
 EXPOSE 47831

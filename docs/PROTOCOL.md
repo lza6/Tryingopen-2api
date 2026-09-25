@@ -7,7 +7,7 @@
 
 - **完全匿名**：`POST /api/open` 不需要 Cookie / 登录 / API Key / 会话 id。
 - 请求头：`origin: https://www.tryingopen.com`、`referer: https://www.tryingopen.com/`、`user-agent: Chrome 151`（站点校验浏览器语义）。
-- 限流：**单 IP 每小时约 20 次**（站点未公开精确配额，实测 429 响应触发）。
+- 限流：**单 IP 每 24h UTC 日约 20 次**（站点未公开精确配额，实测 429 响应触发）。
 
 ## 2. 对话流
 
@@ -70,7 +70,7 @@ Content-Type: application/json
 
 ## 6. 限制与风险
 
-- 每 IP 每小时约 20 次：**必须配代理池轮换**（本项目已内置）。
+- 每 24h UTC 日约 20 次：**必须配代理池轮换**（本项目已内置）。
 - 免费额度：模型按 `pricePerMTok` 计费但站点提供免费额度（登录后可见）；匿名端点额度以站点为准。
 - 免费代理为明文 http，仅建议用于低敏感度对话；住宅代理更稳。
-- `direct_fallback` 直连本机 IP 每小时只有 20 次额度，高并发会触发 429。
+- `direct_fallback` 直连本机 IP 每 24h UTC 日只有约 20 次额度，高并发会触发 429。

@@ -15,12 +15,12 @@
 关键设计：
 
 - **builder 阶段**：`rust:1.85-bookworm`，只装 `build-essential` 和 `pkg-config`。
-  - `rusqlite` 的 `bundled` 特性需要 C 编译器（`cc`），`build-essential` 已包含 gcc/make。
+  - 纯 Rust 依赖，无需 C 编译器（已移除 rusqlite）。
   - `reqwest` 走 `rustls-tls`（见 `Cargo.toml`），不依赖系统 OpenSSL，所以不装 `libssl-dev`；若以后切回 native-tls 再补装。
 - **runtime 阶段**：`debian:bookworm-slim`，只装 `ca-certificates`（HTTPS 出站需要），创建非 root 用户 `appuser`，只拷贝 `target/release/tryingopen2api` 一个文件。
 - **配置与数据**：项目没有默认内置 config（用 `--config` 参数），容器默认执行
   `ENTRYPOINT ["/app/tryingopen2api"]` + `CMD ["--config", "/app/config.json"]`，
-  config 由卷挂载，不打进镜像；`/app/data` 挂载持久化 `proxies.txt`；**会话为内存态**，重启即清；sqlite/telemetry 为预留字段，当前版本不写库。
+  config 由卷挂载，不打进镜像；`/app/data` 挂载持久化 `proxies.txt`；**会话为内存态**，重启即清（无 sqlite/telemetry 库）。
 - 不需要 `CARGO_NET_GIT_FETCH_WITH_CLI`，本项目没有 git 依赖，也不使用 cross。
 
 ## 2. 前置条件
@@ -31,7 +31,7 @@
   | 文件 | 说明 |
   |---|---|
   | `config.json` | 服务配置，必须把 `listen_addr` 改为 `0.0.0.0:47831`（否则容器内只监听 127.0.0.1，宿主机无法访问） |
-  | `data/` 目录 | 存放 `proxies.txt`；`sqlite/telemetry` 为预留，当前不生成 |
+  | `data/` 目录 | 存放 `proxies.txt`（无 sqlite/telemetry 数据） |
 
   `config.json` 未提供时，把仓库 `config.example.json` 复制为 `config.json` 并按需修改：
 
@@ -102,7 +102,7 @@ docker run ... -e LISTEN_ADDR=0.0.0.0:47831 -e UPSTREAM_BASE_URL=https://www.try
 
 - `./data` 挂载到 `/app/data`，保存：
   - `data/proxies.txt`（代理池文件）
-  - `data/`（proxies.txt；sqlite 预留，当前不写）
+  - `data/`（proxies.txt；会话内存态）
   - （无；遥测走 /metrics 内存计数）
 - 容器重建/升级后 proxies.txt 保留在宿主机 `./data`；配置在 `config.json`（卷挂载），**升级前建议备份 `config.json` 与 `data/proxies.txt`**；会话数据在内存中，重启即清空。
 - 想换目录：把 compose 里的 `./data` 改为 `/绝对/路径/数据目录`，或换成 named volume（此时 sqlite 等文件名不变，数据仍在 volume 内）。
@@ -147,7 +147,7 @@ docker logs --tail 50 tryingopen2api
 
 ## 7. 升级步骤（无数据丢失）
 
-1. 备份数据（config.json + data/proxies.txt；sqlite 预留无实际数据）：
+1. 备份数据（config.json + data/proxies.txt；会话内存态无需备份）：
 
    ```bash
    cp -r data "data.bak-$(date +%Y%m%d%H%M%S)"
