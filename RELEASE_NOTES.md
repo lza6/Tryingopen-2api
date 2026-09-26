@@ -1,9 +1,17 @@
 # TryingOpen2API 发布说明
 
-> 当前版本：v0.1.13（能力透传 + 用量可见性 + 结构化日志）· 仓库 main 分支
+> 当前版本：v0.1.14（修复 + 发布调优）· 仓库 main 分支
 > 完整变更历史见 [CHANGELOG.md](CHANGELOG.md)；详细协议/部署见 docs/INDEX.md。
 
+## v0.1.14（2026-09-26）
+
+- fix: 代理 read_timeout 用配置值（不再硬编码 120s）
+- feat: kimi 价格 8.5（上游实测）；release panic=abort（产物 -30%）
+- docs: 全仓漂移修复 + 审计报告 + release 样本归档
+- 验收：本地真实上游 E2E 200；生产 healthz 200；57 tests
+
 ## v0.1.13（2026-09-26）
+
 
 - feat: 模型能力字段透传（reasoning / messageLimit / cheaperFallbackId）+ 429 按上游建议模型降级
 - feat: GET /api/usage 每 key 用量统计（内存有界）+ 面板用量摘要/思考徽章/降级 chip

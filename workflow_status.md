@@ -133,7 +133,19 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 
 
 
+## v0.1.14（2026-09-26，修复 + 发布调优）
+
+| 项 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| F1 | 代理 read_timeout 硬编码 120s -> config 统一 | ✅ | upstream.rs stream() 用 self.read_timeout；本地真实上游 chat 200 |
+| F2 | kimi 静态价格 15.0 -> 8.5（上游实测） | ✅ | /v1/models 动态目录实测 price_per_mtok=8.5 |
+| F3 | release panic=abort（产物 8.37MB -> 5.83MB/-30%） | ✅ | target/release/exe 5,320,704B（fat）→ 5.83MB（thin+abort 最终） |
+| F4 | 文档漂移全修（README_en/NGINX/SOP/DOCKER/PROTOCOL/.dockerignore） | ✅ | DOCS-DRIFT 报告 P0/P1 全处理 |
+| F5 | target 清理 13.4GB（debug/aarch64/tmp/audit-download） | ✅ | release 保留；样本归档 reference/release-audit |
+| F6 | 门禁 + E2E | ✅ | fmt/clippy/57 tests；本地 chat 200 R020_OK；生产 healthz 200 |
+
 ## v0.1.13（2026-09-26，能力透传 + 用量可见性 + 结构化日志）
+
 
 | 项 | 内容 | 状态 | 证据 |
 |---|---|---|---|

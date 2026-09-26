@@ -1,4 +1,14 @@
+## 0.1.14 (2026-09-26) — 修复与发布调优
+
+- fix: 代理客户端 read_timeout 硬编码 120s -> 使用 config.request_timeout_sec（代理/直连统一）
+- feat: kimi-k3 静态价格同步上游 15.0 -> 8.5（2026-09-26 实测）
+- build: release profile 加 panic=abort（产物 8.37MB -> 5.83MB, -30%；服务端 panic 直接 abort 配合 systemd 重启）
+- docs: README_en/NGINX/DEPLOYMENT_SOP/DOCKER/PROTOCOL/.dockerignore 漂移修复（v0.1.13 全仓口径一致）
+- audit: DOCS-DRIFT（P0-P2 漂移清单）+ TARGET-CLEANUP（target 清理 13.4GB，release 样本归档 reference/release-audit）
+- test: 57 全绿（fmt/clippy）；本地真实上游 E2E 200
+
 ## 0.1.13 (2026-09-26) — 能力透传 + 用量可见性 + 结构化日志
+
 
 - feat: 模型能力字段透传（reasoning / messageLimit / cheaperFallbackId）——目录解析按上游实际字段解析（含 JS chunk 裸键/裸数字），OpenAI/Anthropic /v1/models 输出新字段，静态目录补齐 kimi 上游最新价格与降级建议
 - feat: 429 时优先按上游 cheaperFallbackId 降级模型（比盲目换代理更有效），失败回退继续轮换
