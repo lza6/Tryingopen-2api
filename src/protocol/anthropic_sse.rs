@@ -197,13 +197,12 @@ impl Stream for AnthropicTransform {
                                 let hint = crate::upstream::describe_upstream_error(raw);
                                 self.finished = true;
                                 // 错误后必须发出终止事件（message_stop），否则客户端挂起等待
+                                let text = format!("\n\n上游错误: {hint}（原始: {raw}）");
                                 let frame = format!(
                                     "event: content_block_delta\ndata: {}\n\n{}",
-                                    serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":format!("\n\n[hint]")}}),
+                                    serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
                                     self.stop_events()
                                 );
-                                let frame = frame
-                                    .replace("[hint]", &format!("上游错误: {hint}（原始: {raw}）"));
                                 return Poll::Ready(Some(Ok(frame)));
                             }
                             _ => continue,
