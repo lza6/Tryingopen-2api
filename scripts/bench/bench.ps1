@@ -54,7 +54,7 @@ $hasFail = $false
 $endpoints = @(
     @{ Name = "healthz";       Method = "GET";  Path = "/healthz";        Auth = $false },
     @{ Name = "v1_models";     Method = "GET";  Path = "/v1/models";      Auth = $false },
-    @{ Name = "api_proxies";   Method = "GET";  Path = "/api/proxies";    Auth = $false }
+    @{ Name = "api_proxies";   Method = "GET";  Path = "/api/proxies";    Auth = $true }
 )
 if ($ApiKey) {
     $endpoints += @{ Name = "metrics"; Method = "GET"; Path = "/metrics"; Auth = $true }

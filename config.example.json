@@ -10,6 +10,8 @@
   ],
   "request_timeout_sec": 120,
   "catalog_refresh_min": 30,
+  "max_concurrent_requests": 64,
+  "redact_logs": true,
   "proxy_file": "data/proxies.txt",
   "free_proxy_enabled": true,
   "free_proxy_refresh_min": 30,

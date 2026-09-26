@@ -144,7 +144,19 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
       </div>
     </div>
     <div class="panel"><h2>接入信息（实时）</h2>
+      <div class="row" style="margin-bottom:8px">
+        <button class="ghost sm" id="btn-copy-curl">复制 curl</button>
+        <button class="ghost sm" id="btn-copy-python">复制 Python</button>
+        <button class="ghost sm" id="btn-selfcheck">健康自检</button>
+        <span style="color:var(--muted);font-size:12px">一键复制接入命令；健康自检会真实探测各端点。</span>
+      </div>
       <div id="guide-live" class="guide-box">加载中…</div>
+    </div>
+    <div class="panel" id="panel-curl" style="display:none"><h2>curl 示例</h2>
+      <div id="guide-curl" class="guide-box">…</div>
+    </div>
+    <div class="panel" id="panel-selfcheck" style="display:none"><h2>健康自检结果</h2>
+      <div id="guide-selfcheck" class="guide-box">点击"健康自检"开始。</div>
     </div>
     <div class="panel"><h2>默认 effort（思考程度）</h2>
       <div class="guide-box">客户端在 chat/completions 请求体传 <b>effort</b> 字段：&#10;- balanced：默认，均衡思考&#10;- deep：深度思考（更慢更稳）&#10;- low：低思考（更快更省）&#10;当前主要支持 reasoning 类模型（如 qwen/qwen3.8-27b）；不支持时模型会忽略该字段。模型支持情况以 /v1/models 为准。</div>
@@ -171,7 +183,7 @@ function esc(v) {
 async function j(path, opts) {
   opts = opts || {};
   const headers = new Headers(opts.headers || {});
-  if (Array.isArray(API_KEYS) && API_KEYS.length > 0) headers.set('x-api-key', API_KEYS[0]);
+  if (opts.auth !== false && Array.isArray(API_KEYS) && API_KEYS.length > 0) headers.set('x-api-key', API_KEYS[0]);
   headers.set('Accept', 'application/json');
   opts.headers = headers;
   const ctl = new AbortController();
@@ -313,6 +325,20 @@ async function loadGuide() {
     oa.innerHTML = `Base URL: ${esc(base)}\nAPI Key: ${esc(key)}\n模型: ${esc(models)}`;
     anth.innerHTML = `ANTHROPIC_BASE_URL=${esc(anthBase)}\nANTHROPIC_API_KEY=${esc(key)}`;
     py.innerHTML = `from openai import OpenAI\nclient = OpenAI(base_url="${esc(base)}", api_key="${esc(key)}")\nmodel = "${esc(g.models?.[0] || 'qwen/qwen3.8-27b')}"`;
+    const firstModel = (g.models && g.models[0]) || 'qwen/qwen3.8-27b';
+    const curlKey = String(key).replace(/[\\"\r\n]/g, '');
+    const curlCmd = `curl ${base}/chat/completions \\\\
+  -H "Authorization: Bearer ${curlKey}" \\\\
+  -H "Content-Type: application/json" \\\\
+  -d '{\"model\":\"${firstModel}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false}'`;
+    const curlEl = document.getElementById('guide-curl');
+    if (curlEl) curlEl.textContent = curlCmd;
+    const btnCurl = document.getElementById('btn-copy-curl');
+    if (btnCurl) btnCurl.onclick = () => { if (navigator.clipboard?.writeText) navigator.clipboard.writeText(curlCmd).then(() => toast('curl 已复制'), () => toast('复制失败，请手动选择')); else toast('当前环境不支持剪贴板 API'); };
+    const btnPy = document.getElementById('btn-copy-python');
+    if (btnPy) btnPy.onclick = () => { const pyBlock = document.getElementById('guide-python').textContent; if (navigator.clipboard?.writeText) navigator.clipboard.writeText(pyBlock).then(() => toast('Python 已复制'), () => toast('复制失败')); else toast('当前环境不支持剪贴板 API'); };
+    const curlPanel = document.getElementById('panel-curl');
+    if (curlPanel) curlPanel.style.display = '';
   } catch (e) {
     live.innerHTML = '接入信息加载失败: ' + esc(e.message);
     oa.textContent = '加载失败';
@@ -320,6 +346,27 @@ async function loadGuide() {
     py.textContent = '加载失败';
   }
 }
+async function selfCheck() {
+  const box = document.getElementById('guide-selfcheck');
+  const setBox = (html) => { box.innerHTML = html; };
+  setBox('自检中…（healthz/models/用量/鉴权，耗时约 10s）');
+  const btn = document.getElementById('btn-selfcheck');
+  if (btn) { btn.disabled = true; btn.textContent = '自检中…'; }
+  const results = [];
+  const check = async (name, fn) => {
+    try { await fn(); results.push('✅ ' + name); return true; }
+    catch (e) { results.push('❌ ' + name + '：' + esc(e.message)); return false; }
+  };
+  try { await check('healthz', async () => { const r = await j('/healthz', { auth: false }); if (!r.ok) throw new Error('ok=false'); }); } catch (e) { results.push('❌ healthz：' + esc(e.message)); }
+  try { await check('/v1/models', async () => { const r = await j('/v1/models'); if (!(r.data && r.data.length)) throw new Error('空目录'); }); } catch (e) { results.push('❌ /v1/models：' + esc(e.message)); }
+  try { await check('/api/usage', async () => { await j('/api/usage'); }); } catch (e) { results.push('❌ /api/usage：' + esc(e.message)); }
+  setBox(results.join('<br>'));
+  const panel = document.getElementById('panel-selfcheck');
+  if (panel) panel.style.display = '';
+  if (btn) { btn.disabled = false; btn.textContent = '健康自检'; }
+}
+document.getElementById('btn-selfcheck').onclick = selfCheck;
+
 async function genKey() {
   setBtnBusy('btn-genkey', true);
   try {
