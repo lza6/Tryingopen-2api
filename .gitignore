@@ -9,5 +9,6 @@ reference/*.txt
 !源代码、网络数据包/*.css
 graft/.cache/
 
-# 本地 config 覆盖（禁止提交真实凭据）
+# 本地 config（禁止提交真实凭据；config.json 是运行期文件，用 config.example.json + config.local.json 管理）
+config.json
 config.local.json

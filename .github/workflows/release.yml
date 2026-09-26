@@ -30,7 +30,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain (msvc)
         uses: dtolnay/rust-toolchain@stable
@@ -52,7 +52,7 @@ jobs:
           Get-Content "$bin.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tryingopen2api-x86_64-pc-windows-msvc
           path: |
