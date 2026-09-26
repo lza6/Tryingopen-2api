@@ -1,4 +1,13 @@
+## 0.1.16 (2026-09-27) — 协议对齐 + 错误可操作化
+
+- feat: Anthropic thinking 参数支持（{type:enabled}→effort=deep + 系统提示；disabled/未知保持原 effort），resolve_effort 纯函数
+- feat: 502 错误可操作化（describe_upstream_error：区分 API credit 耗尽/模型暂停/429/未知，提示含解决建议）
+- a11y: 健康自检结果区 role=status + aria-live=polite
+- test: 新增 2 测试（resolve_effort 四分支 / describe_upstream_error 分类）→ 59 全绿
+- 验收：responses 流式 200；502 可操作文案被真实上游 credit 耗尽触发验证；生产 healthz 200
+
 ## 0.1.15 (2026-09-27) — 面板 UX + CI Actions v5 + 工程卫生
+
 
 - feat: 面板接入指南加"复制 curl / 复制 Python"按钮（含 key 转义防注入）+ 健康自检按钮（真实探测 healthz/models/usage，auth:false 免带 key）+ curl 示例面板
 - fix: bench.ps1 /api/proxies 端点 Auth 标志过时（实测 401）→ 修正为需鉴权

@@ -73,8 +73,11 @@
 请求：
 ```json
 {"model":"qwen/qwen3.8-27b","messages":[{"role":"user","content":"hi"}],
- "stream":false,"max_tokens":200,"system":"...","tools":[...],"metadata":{"thread_id":"t1"},"effort":"balanced"}
+ "stream":false,"max_tokens":200,"system":"...","tools":[...],"metadata":{"thread_id":"t1"},"effort":"balanced",
+ "thinking":{"type":"enabled","budget_tokens":2048}}
 ```
+- `thinking` 可选：`{"type":"enabled"}` → effort 强制 deep 并注入"请逐步推理"系统提示；`{"type":"disabled"}` / 未传 → 保持 effort
+- **budget_tokens 不生效**（上游无 thinking/budget 通道，仅 effort 三档 balanced/deep/low）；如需深度思考传 `effort:"deep"` 或 `thinking.type:"enabled"`
 响应（非流）：`{"type":"message","content":[{"type":"thinking",...},{"type":"text",...}],"usage":{"input_tokens":N,"output_tokens":N}}`
 流式：SSE 事件 `message_start` → `content_block_start` → `content_block_delta`（thinking_delta/text_delta/input_json_delta）→ `content_block_stop` → `message_delta` → `message_stop`。
 

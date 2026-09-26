@@ -1,9 +1,17 @@
 # TryingOpen2API 发布说明
 
-> 当前版本：v0.1.15（面板 UX + CI Actions v5 + 工程卫生）· 仓库 main 分支
+> 当前版本：v0.1.16（协议对齐 + 错误可操作化）· 仓库 main 分支
 > 完整变更历史见 [CHANGELOG.md](CHANGELOG.md)；详细协议/部署见 docs/INDEX.md。
 
+## v0.1.16（2026-09-27）
+
+- feat: Anthropic thinking 参数 → effort 映射 + 系统提示
+- feat: 502 错误可操作化（区分 credit 耗尽/模型暂停/429）
+- a11y: 自检结果 aria-live
+- test: 59 全绿；验收：responses 流式 200 / 502 可操作文案 / 生产 200
+
 ## v0.1.15（2026-09-27）
+
 
 - feat: 面板"复制 curl/Python"按钮 + 健康自检（真实探测，auth:false）
 - fix: bench 脚本 proxies Auth 标志

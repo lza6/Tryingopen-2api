@@ -133,7 +133,18 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 
 
 
+## v0.1.16（2026-09-27，协议对齐 + 错误可操作化）
+
+| 项 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| P1 | Anthropic thinking 参数 → effort 映射（enabled→deep + 系统提示） | ✅ | resolve_effort 纯函数 + 4 分支单测 |
+| P2 | 502 错误可操作化（credit/暂停/429 分类） | ✅ | describe_upstream_error + 单测；真实上游 credit 耗尽触发验证文案 |
+| P3 | a11y：自检结果 aria-live | ✅ | /ui 渲染 role=status/aria-live |
+| V1 | 门禁 | ✅ | fmt/clippy/59 tests 全绿 |
+| V2 | E2E | ✅ | responses 流式 200；502 可操作文案真实触发；生产 healthz 200 |
+
 ## v0.1.15（2026-09-27，面板 UX + CI Actions v5 + 工程卫生）
+
 
 | 项 | 内容 | 状态 | 证据 |
 |---|---|---|---|
