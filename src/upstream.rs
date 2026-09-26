@@ -56,6 +56,8 @@ pub struct StreamRequest {
 pub struct UpstreamClient {
     pub base_url: String,
     pub http: reqwest::Client,
+    /// 请求读超时（与 config.request_timeout_sec 一致；代理/直连统一）
+    pub read_timeout: Duration,
 }
 
 impl UpstreamClient {
@@ -72,7 +74,11 @@ impl UpstreamClient {
         }
         let http = builder.build()?;
         let base_url = base_url.trim_end_matches('/').to_string();
-        Ok(Self { base_url, http })
+        Ok(Self {
+            base_url,
+            http,
+            read_timeout: timeout,
+        })
     }
 
     pub async fn check_health(&self) -> Result<()> {
@@ -101,7 +107,7 @@ impl UpstreamClient {
         let owned = if proxy.is_some() {
             let b = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(15))
-                .read_timeout(Duration::from_secs(120))
+                .read_timeout(self.read_timeout)
                 .user_agent(DESKTOP_UA)
                 .default_headers(default_headers(&self.base_url));
             let b = if let Some(p) = proxy {

@@ -168,7 +168,7 @@ pub fn catalog() -> Vec<ModelMeta> {
         "Kimi K3",
         "Moonshot AI",
         "1M",
-        15.0,
+        8.5,
         true,
         true,
         true,
