@@ -6,7 +6,7 @@ TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开�
 
 **完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每日约 20 次」限流（代理池轮换出口缓解），网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n> **v0.1.12（终局第 4 轮收尾）**：代理池 44 源（免费源抓取，单轮预检注入上限 4500，实测约 4490-4500 可用）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n > **v0.1.13（能力透传 + 用量可见性）**：模型能力字段透传（思考/消息数上限/降级建议）、429 按上游建议模型自动降级、每 key 用量统计（/api/usage）、请求日志结构化 JSON、config.local.json 局部覆盖。此前已含：代理池 44 源（免费源抓取，单轮预检注入上限 4500）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -84,6 +84,7 @@ API Key:  sk-local（或面板生成）
 | `/api/proxies/refresh-free` | POST | 手动抓取一轮免费代理 |
 | `/api/catalog/refresh` | POST | 手动同步上游模型目录 |
 | `/api/guide` | GET | 接入信息 |
+| `/api/usage` | GET | 每 API Key 用量统计（需鉴权） |
 | `/api/config/api-key` | POST | 运行时生成 / 设置 / 清除下游 API Key |
 | `/ui` | GET | 内置控制面板 |
 
@@ -185,7 +186,7 @@ TryingOpen 站点（Next.js + Turbopack，完全匿名）：
 ## 八、测试
 
 ```bash
-cargo test   # 44 个测试：模型/协议/代理池/限流/熔断/metrics 等
+cargo test   # 57 个测试：模型/协议/代理池/限流/熔断/metrics/用量统计 等
 ```
 
 > 注：本机 rustdoc.exe 缺失导致 `cargo test --doc` 失败（chocolatey 安装问题），与代码无关；`cargo test --lib` / `cargo test --tests` 全部通过。
@@ -204,11 +205,15 @@ src/
 ├── free_proxy.rs    # 免费代理抓取器（44 源 + 公网 IP 过滤 + TCP 延迟预检）
 ├── session.rs       # 会话绑定（线程 ↔ 模型）
 ├── errors.rs        # OpenAI/Anthropic 兼容错误
+├── prod_guard.rs    # 生产保护：限流/熔断/metrics/用量统计
 ├── web.rs           # 内置控制面板（单 HTML）
 └── protocol/
     ├── openai_sse.rs      # 上游 SSE → OpenAI SSE
+    ├── openai_sse_helper.rs  # 非流式 OpenAI 组装
     ├── anthropic_sse.rs   # 上游 SSE → Anthropic SSE
-    └── stream.rs          # reqwest bytes → tokio AsyncRead 适配
+    ├── responses.rs       # /v1/responses 桥接
+    ├── stream.rs          # reqwest bytes → tokio AsyncRead 适配
+    └── mod.rs             # 协议模块声明
 tests/
 ├── models_test.rs   # 模型目录/归一化/解析/代理池
 └── proxy_test.rs    # 免费代理解析

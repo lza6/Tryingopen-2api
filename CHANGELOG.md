@@ -1,4 +1,17 @@
+## 0.1.13 (2026-09-26) — 能力透传 + 用量可见性 + 结构化日志
+
+- feat: 模型能力字段透传（reasoning / messageLimit / cheaperFallbackId）——目录解析按上游实际字段解析（含 JS chunk 裸键/裸数字），OpenAI/Anthropic /v1/models 输出新字段，静态目录补齐 kimi 上游最新价格与降级建议
+- feat: 429 时优先按上游 cheaperFallbackId 降级模型（比盲目换代理更有效），失败回退继续轮换
+- feat: 每 API key 用量统计（UsageTracker，有界内存）+ GET /api/usage（鉴权）+ /api/guide 返回累计请求数
+- feat: 面板模型表加"思考"徽章、messageLimit/降级 chip、累计请求数显示
+- feat: 请求日志结构化 JSON 行（event/endpoint/key 脱敏/model/stream/status/took_ms/detail），兼容 redact_logs 开关
+- feat: config.local.json 深合并覆盖（支持局部覆盖，不重置未出现字段）
+- ci: 移除 ci.yml 中与 release.yml 重复的 release job（L5）
+- test: 新增 8 测试（usage tracker 2 + 能力字段解析 2 + 既有 53）→ 57 全绿
+- docs: README/ARCHITECTURE 测试数同步 57；docs/audit 新增 benchmark/CI-review/cleanup 报告
+
 ## 0.1.12 (2026-09-26) — 终局第 4 轮收尾（缺口清零 + truncate bug 修复）
+
 
 - fix: truncate_upstream_messages「保留最近 1/2」方向反了（截断后丢弃截断目标、保留超长旧消息）→ 改为保留最近并丢弃更旧
 - chore: 移除 rusqlite 死依赖与 sqlite_path/telemetry_path/proxies_path/precheck_concurrency 死配置（纯 Rust、构建更快）

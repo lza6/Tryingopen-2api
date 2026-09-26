@@ -132,7 +132,23 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 - [x] 公网 E2E：无 key 探活+安全拒绝（E2E-2026-09-26）；本地带 key 真实上游（E2E-local）；带生产 key 公网全量待用户提供 key 后补跑
 
 
+
+## v0.1.13（2026-09-26，能力透传 + 用量可见性 + 结构化日志）
+
+| 项 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| V1 | 模型能力字段透传（reasoning/messageLimit/cheaperFallbackId） | ✅ | models.rs/upstream.rs 解析 + /v1/models 实测（kimi messageLimit=5 静态、动态如实反映上游）；新增 2 测试 |
+| V2 | 429 按上游 cheaperFallbackId 降级 | ✅ | api.rs try_rounds 降级分支（有界回退）；模型 429 时优先建议模型 |
+| V3 | /api/usage 每 key 用量统计 | ✅ | prod_guard UsageTracker + 路由；真实 E2E 2 keys/3 请求全 OK；401 鉴权验证 |
+| V4 | 面板思考徽章/降级 chip/用量摘要 | ✅ | web.rs 渲染；/ui 浏览器验证（思考列/累计请求/chip） |
+| V5 | 请求日志结构化 JSON | ✅ | 实测 REQ JSON 行（key=***、took_ms、status） |
+| V6 | config.local.json 深合并 | ✅ | 实测 redact_logs 覆盖生效 |
+| V7 | CI release job 去重 | ✅ | ci.yml 移除重复 release job（保留 release.yml 独占） |
+| V8 | 门禁 | ✅ | fmt/clippy -D warnings/57 tests 全绿（36+13+8） |
+| V9 | 真实 E2E | ✅ | 本地真实上游：chat 200 E2E_OK / anthropic 200 / responses 200 RESP_OK / usage 统计 / 401 / JSON 日志 |
+
 ## v0.1.12（2026-09-26，终局第 4 轮收尾）
+
 
 | 项 | 内容 | 状态 |
 |---|---|---|

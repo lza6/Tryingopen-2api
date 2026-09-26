@@ -79,8 +79,9 @@
 流式：SSE 事件 `message_start` → `content_block_start` → `content_block_delta`（thinking_delta/text_delta/input_json_delta）→ `content_block_stop` → `message_delta` → `message_stop`。
 
 ### GET /v1/models
-- OpenAI 形状：`{"object":"list","data":[{"id":"provider/model","object":"model","created":0,"owned_by":"family"}]}`
+- OpenAI 形状：`{"object":"list","data":[{"id":"provider/model","object":"model","created":0,"owned_by":"family","label":"...","context_window":N,"context":"128k","price_per_mtok":N,"tools":bool,"vision":bool,"reasoning":bool,"message_limit":N|null,"cheaper_fallback":"provider/model"|null}]}`
 - 动态目录启动/定时同步；已下线模型隐藏
+- 能力字段如实反映上游：`reasoning`/`message_limit`/`cheaper_fallback` 仅在目录包含时出现
 
 ### GET /healthz
 `{"ok":true,"app":"tryingopen2api","version": 以实际 /healthz 输出为准,"models":N,"proxies":N,"upstream":"..."}`
@@ -94,6 +95,11 @@
 
 ### POST /api/catalog/refresh
 - 手动同步上游模型目录；失败返回 502
+
+### GET /api/usage
+- **需 API key**（与 /api/* 一致）
+- 返回当前 key 的用量：`{"ok":true,"current_key":"...","usage":{"requests","ok","errors_4xx","errors_5xx","rate_limited","upstream_errors","duration_ms_total"},"summary":{"tracked_keys","total_requests","total_ok"}}`
+- 只暴露当前 key 自身统计 + 全局总览（不泄漏其它 key 明细）
 
 ### GET /api/guide
 - 接入信息（监听地址/key 状态/模型列表/代理数）

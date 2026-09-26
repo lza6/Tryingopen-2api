@@ -1,7 +1,16 @@
 # TryingOpen2API 发布说明
 
-> 当前版本：v0.1.12（终局闭环第 4 轮）· 仓库 main 分支
+> 当前版本：v0.1.13（能力透传 + 用量可见性 + 结构化日志）· 仓库 main 分支
 > 完整变更历史见 [CHANGELOG.md](CHANGELOG.md)；详细协议/部署见 docs/INDEX.md。
+
+## v0.1.13（2026-09-26）
+
+- feat: 模型能力字段透传（reasoning / messageLimit / cheaperFallbackId）+ 429 按上游建议模型降级
+- feat: GET /api/usage 每 key 用量统计（内存有界）+ 面板用量摘要/思考徽章/降级 chip
+- feat: 请求日志结构化 JSON 行（key 脱敏）
+- feat: config.local.json 局部覆盖合并
+- ci: release job 去重；test: 53 → 57 全绿
+- 验收：本地真实上游 E2E（chat/anthropic/responses 三协议 200 + usage 统计 + 401 鉴权 + JSON 日志）
 
 ## v0.1.11（2026-09-26）
 

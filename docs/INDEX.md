@@ -39,3 +39,6 @@
 | [audit/N3-perf-load-test.md](audit/N3-perf-load-test.md) | 性能压测（真实数据） |
 | [audit/N4-security-audit.md](audit/N4-security-audit.md) | 安全审计（依赖/密钥/SSRF） |
 | [audit/N5-ui-ux-audit.md](audit/N5-ui-ux-audit.md) | UI/UX 审计 |
+| [audit/N3-benchmark-2026-09-26.md](audit/N3-benchmark-2026-09-26.md) | 性能压测基准（PowerShell 脚本 + JSON 基线） |
+| [audit/CI-REVIEW-2026-09-26.md](audit/CI-REVIEW-2026-09-26.md) | CI 工作流去重审查 |
+| [audit/CLEANUP-AUDIT-2026-09-26.md](audit/CLEANUP-AUDIT-2026-09-26.md) | 历史凭据/残留产物/文档漂移审计 |
