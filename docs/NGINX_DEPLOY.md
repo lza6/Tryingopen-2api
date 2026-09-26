@@ -8,7 +8,7 @@
 ```
 客户端 → https://try.hwhcie.bond:443
          → nginx (20.204.27.154, sites-enabled/tryingopen)
-         → http://127.0.0.1:47831 (tryingopen2api, v0.1.10)
+         → http://127.0.0.1:47831 (tryingopen2api, v0.1.13)
 ```
 
 同机还跑着 imagefree（听风AI）：`imagefree/api/admin.hwhcie.bond` → `127.0.0.1:8100`，

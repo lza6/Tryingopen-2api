@@ -65,8 +65,8 @@ Content-Type: application/json
 
 - `GET /` 首页 HTML → 提取 `/_next/static/chunks/*.js` 路径
 - 每个 chunk 里模型记录：`{id:"provider/model",name:"...",maker:"...",logo:"...",params:"...",context:"262k",blurb:"...",supportsTools:!0,supportsImages:!0,pricePerMTok:3.2,zdr:!0,...}`
-- 可选字段：`messageLimit`（如 kimi-k3=5）、`cheaperFallbackId`（如 kimi-k3 → minimax/minimax-m3）
-- 静态目录 12 模型兜底；2026-09-24 实时抓到 24 个（新增 glm-5.3-flash、qwen3.8-flash、deepseek-v4.1-flash、glm-5.3、nemotron-3-ultra、qwen3.8-2.4t、mimo-v2.6 系、inclusionai/ling-3.0、anthropic/claude-sonnet-5、openai/gpt-5.6-terra 等）
+- 可选字段（2026-09-24 抓包快照记载）：`messageLimit`（如 kimi-k3=5）、`cheaperFallbackId`（如 kimi-k3 → minimax/minimax-m3）、`supportsReasoning`；**2026-09-26 实测上游 13 个 chunk 已不含这三字段**（仅 supportsTools/supportsImages/pricePerMTok/maxOutputTokens/zdr 等），网关解析器保留了兼容解析（命中则透传，未命中如实为空），静态目录仍保留 kimi messageLimit=5/cheaper 兜底元数据
+- 静态目录 12 模型兜底；2026-09-24 实时抓到 24 个，2026-09-26 实时抓到 22 个（claude-sonnet-5/gpt-5.6-terra 为 UI「coming」记录非可对话模型）；kimi-k3 上游价格 2026-09-26 实测 **8.5 USD/M**（09-24 快照为 15.0，静态表已同步 8.5）
 
 ## 6. 限制与风险
 

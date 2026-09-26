@@ -7,9 +7,6 @@ target/
 # 数据文件（运行时数据由 volume 挂载，不进镜像）
 data/
 data/*.txt
-data/*.sqlite
-data/*.sqlite-shm
-data/*.sqlite-wal
 
 # 本地配置（config 由 volume 挂载，避免把密钥/API Key 打进镜像）
 config.json

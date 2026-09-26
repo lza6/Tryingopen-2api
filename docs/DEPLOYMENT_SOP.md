@@ -5,7 +5,7 @@
 ## 1. 环境要求
 - Windows / Linux（Rust 交叉编译；本项目默认 Windows 产物）
 - Rust 工具链（stable，>=1.85）
-- 无外部依赖（单二进制；SQLite 内嵌）
+- 无外部依赖（单二进制；会话为内存态，重启即清，无 SQLite）
 
 ## 2. 构建
 ```bash

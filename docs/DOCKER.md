@@ -105,7 +105,7 @@ docker run ... -e LISTEN_ADDR=0.0.0.0:47831 -e UPSTREAM_BASE_URL=https://www.try
   - `data/`（proxies.txt；会话内存态）
   - （无；遥测走 /metrics 内存计数）
 - 容器重建/升级后 proxies.txt 保留在宿主机 `./data`；配置在 `config.json`（卷挂载），**升级前建议备份 `config.json` 与 `data/proxies.txt`**；会话数据在内存中，重启即清空。
-- 想换目录：把 compose 里的 `./data` 改为 `/绝对/路径/数据目录`，或换成 named volume（此时 sqlite 等文件名不变，数据仍在 volume 内）。
+- 想换目录：把 compose 里的 `./data` 改为 `/绝对/路径/数据目录`，或换成 named volume（`proxies.txt` 数据仍在 volume 内）。
 
 ### 5.3 常见环境变量（程序内 `src/config.rs` 支持）
 
@@ -125,7 +125,7 @@ docker run ... -e LISTEN_ADDR=0.0.0.0:47831 -e UPSTREAM_BASE_URL=https://www.try
 
 ## 6. 健康检查
 
-程序提供 `GET /healthz`（返回 `{"ok":true,...}`）。compose 未内置 healthcheck（部分旧版 compose 对 `curl/wget` 依赖敏感），建议按需启用：
+程序提供 `GET /healthz`（返回 `{"ok":true,...}`）。compose 已内置 healthcheck（bash + `/dev/tcp`，无需 curl/wget）：
 
 ```yaml
     healthcheck:

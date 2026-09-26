@@ -106,7 +106,7 @@ API Key:  sk-local（或面板生成）
 | `google/gemma-4-26b-a4b-it` | Gemma 4 26B | 256k | 0.4 |
 | `openai/gpt-oss-120b` | GPT-OSS 120B | 128k | 0.6 |
 | `meta/muse-glimmer-30b` | Muse Glimmer 30B | 131k | 1.5 |
-| `moonshotai/kimi-k3` | Kimi K3 | 1M | 15 |
+| `moonshotai/kimi-k3` | Kimi K3 | 1M | 8.5 |
 | `minimax/minimax-m3` | MiniMax M3 | 1M | 1.2 |
 | `thinkingmachines/inkling-small` | Inkling Small | 524k | 1.2 |
 | `z-ai/glm-5.2` | GLM 5.2 | 1M | 1.54 |
