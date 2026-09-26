@@ -1,9 +1,18 @@
 # TryingOpen2API 发布说明
 
-> 当前版本：v0.1.14（修复 + 发布调优）· 仓库 main 分支
+> 当前版本：v0.1.15（面板 UX + CI Actions v5 + 工程卫生）· 仓库 main 分支
 > 完整变更历史见 [CHANGELOG.md](CHANGELOG.md)；详细协议/部署见 docs/INDEX.md。
 
+## v0.1.15（2026-09-27）
+
+- feat: 面板"复制 curl/Python"按钮 + 健康自检（真实探测，auth:false）
+- fix: bench 脚本 proxies Auth 标志
+- ci: Actions v5（checkout/upload-artifact）
+- chore: config.json 移出 git 跟踪；config.example 补齐
+- 验收：本地 E2E（面板渲染/usage 计数/JSON 日志）+ 生产 healthz；57 tests
+
 ## v0.1.14（2026-09-26）
+
 
 - fix: 代理 read_timeout 用配置值（不再硬编码 120s）
 - feat: kimi 价格 8.5（上游实测）；release panic=abort（产物 -30%）

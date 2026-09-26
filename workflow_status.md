@@ -133,7 +133,20 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 
 
 
+## v0.1.15（2026-09-27，面板 UX + CI Actions v5 + 工程卫生）
+
+| 项 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| U1 | 面板复制 curl/Python + 健康自检（auth:false） | ✅ | /ui 渲染 copy-curl/selfcheck；KEY 转义防注入 |
+| U2 | bench proxies Auth 修正 | ✅ | 真实基线 4 端点 15/15 200（P50 71-78ms） |
+| C1 | Actions checkout/upload-artifact v5 | ✅ | YAML 校验 + CI 绿 |
+| H1 | config.json 移出 git 跟踪 | ✅ | git rm --cached + .gitignore |
+| H2 | config.example 补齐 2 字段 | ✅ | 与 config.rs 全对齐 |
+| V1 | 门禁 | ✅ | fmt/clippy/57 tests 全绿 |
+| V2 | E2E | ✅ | 面板渲染/usage 计数/JSON 日志/kimi 8.5；上游配额耗尽负路径 502 正确降级 |
+
 ## v0.1.14（2026-09-26，修复 + 发布调优）
+
 
 | 项 | 内容 | 状态 | 证据 |
 |---|---|---|---|

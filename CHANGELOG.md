@@ -1,4 +1,15 @@
+## 0.1.15 (2026-09-27) — 面板 UX + CI Actions v5 + 工程卫生
+
+- feat: 面板接入指南加"复制 curl / 复制 Python"按钮（含 key 转义防注入）+ 健康自检按钮（真实探测 healthz/models/usage，auth:false 免带 key）+ curl 示例面板
+- fix: bench.ps1 /api/proxies 端点 Auth 标志过时（实测 401）→ 修正为需鉴权
+- ci: actions/checkout v4→v5、actions/upload-artifact v4→v5（消 Node20 deprecation 警告）
+- chore: config.json 移出 git 跟踪（.gitignore 已加；运行期文件用 config.local.json 管理）
+- chore: config.example.json 补齐 max_concurrent_requests/redact_logs
+- audit: CODE-REVIEW-2026-09-27（面板 P1 display:none 修复 + P2 key 转义 + auth:false）
+- test: 57 全绿；bench 真实基线（4 端点 15/15 200）
+
 ## 0.1.14 (2026-09-26) — 修复与发布调优
+
 
 - fix: 代理客户端 read_timeout 硬编码 120s -> 使用 config.request_timeout_sec（代理/直连统一）
 - feat: kimi-k3 静态价格同步上游 15.0 -> 8.5（2026-09-26 实测）
