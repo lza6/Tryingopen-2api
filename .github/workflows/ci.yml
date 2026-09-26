@@ -3,7 +3,7 @@
 # ── 分支策略 ─────────────────────────────────────────────────────────────
 #   feature-*  → PR → main （本文件不跑 feature-* 直接 push，只跑 PR）
 #   develop    → 中间集成分支，push 触发 test（可选，当前仓库未用 develop）
-#   main       → 发布主线：push 触发全量测试 + security + windows release 产物
+#   main       → 发布主线：push 触发全量测试 + security（release 产物由 release.yml 独占，tag v* 触发）
 #   hotfix     说明：紧急修复建议走临时 branch（hotfix/xxx）→ PR → main，
 #             与 feature 分支同一套 PR 校验；不要在 main 上直接改。
 #
@@ -13,7 +13,7 @@
 #              以 rust-version = "1.85" 声明在 Cargo.toml，当前仓库未声明）
 #   fmt/clippy 只跑 ubuntu 一次（Windows 结果一致，省 runner 时间）
 #   test 跑矩阵（ubuntu + windows，main/PR 都跑）
-#   release 只在 windows-latest 构建 x86_64-pc-windows-msvc，上传 artifact + .sha256
+#   release 由 .github/workflows/release.yml 独占（tag v* 触发，windows 构建 + Release 创建），本文件不重复构建
 #
 # ── 缓存 ────────────────────────────────────────────────────────────────
 #   Swatinem/rust-cache@v2：key 内建 OS 区分（windows 的 target 缓存自动分开），
@@ -135,44 +135,3 @@ jobs:
       # ── 可选：trivy fs 文件系统漏洞扫描（对容器/fs 更全面，本次不做硬性门槛）──
       # - name: trivy fs (optional)
       #   run: (cd /tmp && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin") && "$HOME/.local/bin/trivy" fs --exit-code 0 .
-
-  # ── 5) release：仅 windows，构建 msvc 产物 + sha256 + artifact ─────────
-  # 可选 coverage：cargo llvm-cov（需 nightly 或 stable + llvm-tools-preview），
-  # 阈值示例：--fail-under-lines 80（未启用，避免稳定/网络噪音干扰主流程）。
-  release:
-    name: release (windows x86_64-msvc)
-    runs-on: windows-latest
-    needs: [fmt, clippy, test, security]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust toolchain (msvc)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Build release (x86_64-pc-windows-msvc)
-        run: cargo build --release --target x86_64-pc-windows-msvc --bin tryingopen2api
-      - name: Generate .sha256
-        shell: pwsh
-        run: |
-          $bin = "target/x86_64-pc-windows-msvc/release/tryingopen2api.exe"
-          Get-FileHash -Algorithm SHA256 $bin | Format-List
-          $hash = (Get-FileHash -Algorithm SHA256 $bin).Hash.ToLower()
-          Set-Content -Path "$bin.sha256" -Value "$hash  $([System.IO.Path]::GetFileName($bin))" -Encoding ascii
-      - name: Upload release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tryingopen2api-x86_64-pc-windows-msvc
-          path: |
-            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe
-            target/x86_64-pc-windows-msvc/release/tryingopen2api.exe.sha256
-          if-no-files-found: error
-          retention-days: 14
