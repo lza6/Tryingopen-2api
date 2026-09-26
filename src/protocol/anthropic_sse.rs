@@ -189,17 +189,21 @@ impl Stream for AnthropicTransform {
                                 return Poll::Ready(Some(Ok(self.stop_events())));
                             }
                             "error" => {
-                                let msg = json
+                                let raw = json
                                     .get("errorText")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("上游流错误");
+                                // 与非流式路径一致：可操作中文提示（区分 credit/暂停/429/未知）
+                                let hint = crate::upstream::describe_upstream_error(raw);
                                 self.finished = true;
                                 // 错误后必须发出终止事件（message_stop），否则客户端挂起等待
                                 let frame = format!(
                                     "event: content_block_delta\ndata: {}\n\n{}",
-                                    serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":format!("\n\n[上游错误: {msg}]")}}),
+                                    serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":format!("\n\n[hint]")}}),
                                     self.stop_events()
                                 );
+                                let frame = frame
+                                    .replace("[hint]", &format!("上游错误: {hint}（原始: {raw}）"));
                                 return Poll::Ready(Some(Ok(frame)));
                             }
                             _ => continue,

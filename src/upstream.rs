@@ -382,6 +382,37 @@ pub fn is_chat_too_long_error(err: &str) -> bool {
         || lower.contains("内容过长")
 }
 
+/// 把上游错误事件转成可操作的中文提示（区分信用耗尽/模型暂停/限流/未知）
+pub fn describe_upstream_error(err: &str) -> &'static str {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("run out of api credit")
+        || lower.contains("out of api credit")
+        || lower.contains("api credit")
+        || lower.contains("配额")
+    {
+        "上游免费额度已耗尽（API credit），请稍后（每 24h UTC 日约 20 次）或配置更多代理/住宅代理后重试"
+    } else if is_model_paused_error(err) {
+        "上游模型当前暂停/容量不足，请换一个模型重试（如 qwen/qwen3.8-27b）"
+    } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("限流") {
+        "上游限流中（每 24h UTC 日约 20 次），请稍后重试或配置代理池"
+    } else {
+        "上游返回错误事件（可能被限流或模型不可用）"
+    }
+}
+
+/// Anthropic thinking 参数 → effort 映射：enabled 时强制 deep；否则保持原 effort
+pub fn resolve_effort(thinking: Option<&serde_json::Value>, effort: &str) -> String {
+    let enabled = thinking
+        .and_then(|t| t.get("type").and_then(|v| v.as_str()))
+        .map(|ty| ty == "enabled")
+        .unwrap_or(false);
+    if enabled {
+        "deep".to_string()
+    } else {
+        effort.to_string()
+    }
+}
+
 pub fn is_model_paused_error(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
     let paused_kw = [
@@ -403,7 +434,10 @@ pub fn is_model_paused_error(err: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_chat_too_long_error, is_model_not_found_error, is_model_paused_error};
+    use super::{
+        describe_upstream_error, is_chat_too_long_error, is_model_not_found_error,
+        is_model_paused_error, resolve_effort,
+    };
 
     #[test]
     fn model_not_found_tryingopen_that_model_isnt_on_page() {
@@ -434,6 +468,41 @@ mod tests {
         // 非暂停错误不误判
         assert!(!is_model_paused_error("That model isn't on this page."));
         assert!(!is_model_paused_error("upstream timeout"));
+    }
+
+    #[test]
+    fn describe_upstream_error_classifies() {
+        // 信用耗尽 → 可操作提示含"免费额度已耗尽"
+        let credit = describe_upstream_error(
+            "This site has run out of API credit for the moment. Please try again later.",
+        );
+        assert!(credit.contains("免费额度已耗尽"), "{credit}");
+        // 模型暂停 → 换模型提示
+        let paused = describe_upstream_error(
+            "GLM 5.2 is paused while we bring up more capacity. Pick another model.",
+        );
+        assert!(paused.contains("模型当前暂停"), "{paused}");
+        // 429 → 限流提示
+        let rl = describe_upstream_error("upstream-429: rate limited");
+        assert!(rl.contains("限流"), "{rl}");
+        // 未知 → 通用
+        let unknown = describe_upstream_error("some weird error");
+        assert!(unknown.contains("错误事件"), "{unknown}");
+    }
+
+    #[test]
+    fn resolve_effort_thinking_map() {
+        // thinking enabled → deep
+        let t = serde_json::json!({"type": "enabled", "budget_tokens": 2048});
+        assert_eq!(resolve_effort(Some(&t), "balanced"), "deep");
+        // thinking disabled → 保持
+        let d = serde_json::json!({"type": "disabled"});
+        assert_eq!(resolve_effort(Some(&d), "balanced"), "balanced");
+        // 未传 thinking → 保持
+        assert_eq!(resolve_effort(None, "low"), "low");
+        // 未知 type → 保持
+        let u = serde_json::json!({"type": "weird"});
+        assert_eq!(resolve_effort(Some(&u), "deep"), "deep");
     }
 
     #[test]

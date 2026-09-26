@@ -156,7 +156,7 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
       <div id="guide-curl" class="guide-box">…</div>
     </div>
     <div class="panel" id="panel-selfcheck" style="display:none"><h2>健康自检结果</h2>
-      <div id="guide-selfcheck" class="guide-box">点击"健康自检"开始。</div>
+      <div id="guide-selfcheck" class="guide-box" role="status" aria-live="polite">点击"健康自检"开始。</div>
     </div>
     <div class="panel"><h2>默认 effort（思考程度）</h2>
       <div class="guide-box">客户端在 chat/completions 请求体传 <b>effort</b> 字段：&#10;- balanced：默认，均衡思考&#10;- deep：深度思考（更慢更稳）&#10;- low：低思考（更快更省）&#10;当前主要支持 reasoning 类模型（如 qwen/qwen3.8-27b）；不支持时模型会忽略该字段。模型支持情况以 /v1/models 为准。</div>

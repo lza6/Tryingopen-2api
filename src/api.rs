@@ -603,6 +603,37 @@ fn media_type(url: &str) -> String {
     }
 }
 
+/// 移除文本中已存在的 [SYSTEM INSTRUCTIONS]...[/SYSTEM INSTRUCTIONS] 块。
+/// 多轮会话时历史首条 user 已含网关上一轮注入的系统块，重放回来会重复堆积，
+/// 注入前先剥离，保证每个请求只有一份系统提示。
+fn strip_system_block(text: &str) -> String {
+    let start = "[SYSTEM INSTRUCTIONS]";
+    let end = "[/SYSTEM INSTRUCTIONS]";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut removed = false;
+    while let Some(i) = rest.find(start) {
+        out.push_str(&rest[..i]);
+        removed = true;
+        match rest[i..].find(end) {
+            Some(j) => {
+                rest = &rest[i + j + end.len()..];
+            }
+            None => {
+                // 未闭合的 system 块：丢弃到结尾
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    if removed {
+        out
+    } else {
+        text.to_string()
+    }
+}
+
 /// 组装上游请求体（与浏览器的 HAR 请求体同构）
 fn build_upstream_request(
     model: &str,
@@ -709,6 +740,12 @@ fn build_upstream_request(
             system_texts.join("\n\n")
         );
         if let Some(first_user) = converted.iter_mut().find(|m| m.role == "user") {
+            // 幂等：剥离历史重放带来的旧系统块，只保留本请求注入的一份
+            if let Some(first_text) = first_user.parts.first_mut() {
+                if let Some(t) = first_text.text.take() {
+                    first_text.text = Some(strip_system_block(&t));
+                }
+            }
             first_user.parts.insert(
                 0,
                 MessagePart {
@@ -940,7 +977,8 @@ async fn handle_chat_completions(
                         start.elapsed(),
                     );
                     return api_err_response(ApiError::upstream(format!(
-                        "上游返回错误事件（可能被限流或模型不可用）: {em}"
+                        "{}: {em}",
+                        crate::upstream::describe_upstream_error(em)
                     )));
                 }
                 let rb_key = request_key(&headers);
@@ -1358,6 +1396,10 @@ pub struct AnthropicRequest {
     /// 思考程度（balanced/deep/low 等，上游决定）
     #[serde(default = "default_effort")]
     pub effort: String,
+    /// Anthropic thinking 参数（如 {"type":"enabled","budget_tokens":N}）：
+    /// enabled → effort 强制 deep；disabled / 未传 → 保持 effort
+    #[serde(default)]
+    pub thinking: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1530,8 +1572,21 @@ async fn handle_claude_messages(
         .as_ref()
         .map(|t| t.as_array().map(|v| !v.is_empty()).unwrap_or(false))
         .unwrap_or(false);
+    // Anthropic thinking 参数 → effort 映射：enabled 时强制 deep（Claude Code 语义）
+    let thinking_enabled = crate::upstream::resolve_effort(body.thinking.as_ref(), "balanced")
+        == "deep"
+        && body
+            .thinking
+            .as_ref()
+            .and_then(|t| t.get("type").and_then(|v| v.as_str()))
+            .map(|ty| ty == "enabled")
+            .unwrap_or(false);
+    let effective_effort = crate::upstream::resolve_effort(body.thinking.as_ref(), &body.effort);
     let mut up_msgs: Vec<UpstreamMessage> = Vec::new();
     let mut system_texts: Vec<String> = Vec::new();
+    if thinking_enabled {
+        system_texts.push("请逐步推理（step-by-step），在最终回答中展示思考过程。".to_string());
+    }
     if tool_mode {
         let mut instr = format!(
             "[TOOL CALLING MODE]\nAvailable tools (JSON): {}\nIf you need to call a tool, respond with ONLY a single JSON object and no other text, no markdown fences: {{\"tool_call\":{{\"name\":\"<exact tool name>\",\"arguments\":{{...}}}}}}",
@@ -1579,6 +1634,12 @@ async fn handle_claude_messages(
     }
     if !system_texts.is_empty() {
         if let Some(first_user) = up_msgs.iter_mut().find(|m| m.role == "user") {
+            // 幂等：剥离历史重放带来的旧系统块，只保留本请求注入的一份
+            if let Some(first_text) = first_user.parts.first_mut() {
+                if let Some(t) = first_text.text.take() {
+                    first_text.text = Some(strip_system_block(&t));
+                }
+            }
             first_user.parts.insert(
                 0,
                 MessagePart {
@@ -1601,7 +1662,7 @@ async fn handle_claude_messages(
         trigger: "submit-message".into(),
         message_id: format!("msg-{}", uuid::Uuid::new_v4().simple()),
         model: model.clone(),
-        effort: body.effort.clone(),
+        effort: effective_effort,
         messages: up_msgs,
         stream: true,
     };
@@ -1677,7 +1738,8 @@ async fn handle_claude_messages(
                     start.elapsed(),
                 );
                 return api_err_response_anthropic(ApiError::upstream(format!(
-                    "上游返回错误事件（可能被限流或模型不可用）: {em}"
+                    "{}: {em}",
+                    crate::upstream::describe_upstream_error(em)
                 )));
             }
             let mut content: Vec<serde_json::Value> = Vec::new();
@@ -1921,7 +1983,8 @@ async fn handle_responses(
                     start.elapsed(),
                 );
                 return api_err_response(ApiError::upstream(format!(
-                    "上游返回错误事件（可能被限流或模型不可用）: {em}"
+                    "{}: {em}",
+                    crate::upstream::describe_upstream_error(em)
                 )));
             }
             let tc = crate::protocol::openai_sse::detect_tool_call(&nr.text);
@@ -2157,6 +2220,24 @@ fn api_err_response_anthropic(e: ApiError) -> Response {
 mod tests {
     use super::*;
     use crate::upstream::{MessagePart, UpstreamMessage};
+
+    #[test]
+    fn strip_system_block_idempotent() {
+        // 无系统块 → 原样
+        assert_eq!(strip_system_block("hi there"), "hi there");
+        // 单块 → 剥离
+        let one = "[SYSTEM INSTRUCTIONS]\nkeep me\n[/SYSTEM INSTRUCTIONS]\nhello";
+        assert_eq!(strip_system_block(one), "\nhello");
+        // 多轮重放：旧块 + 新内容 → 只留新内容（幂等）
+        let replayed = "[SYSTEM INSTRUCTIONS]\nold system\n[/SYSTEM INSTRUCTIONS]\nuser says hi";
+        assert_eq!(strip_system_block(replayed), "\nuser says hi");
+        // 多个块 → 全部剥离
+        let multi = "a[SYSTEM INSTRUCTIONS]x[/SYSTEM INSTRUCTIONS]b[SYSTEM INSTRUCTIONS]y[/SYSTEM INSTRUCTIONS]c";
+        assert_eq!(strip_system_block(multi), "abc");
+        // 未闭合块 → 剥到结尾
+        let unclosed = "head[SYSTEM INSTRUCTIONS]never closed";
+        assert_eq!(strip_system_block(unclosed), "head");
+    }
 
     fn msg(role: &str, text: &str) -> UpstreamMessage {
         UpstreamMessage {
