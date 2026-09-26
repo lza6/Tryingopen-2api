@@ -131,6 +131,9 @@ async fn main() -> anyhow::Result<()> {
         cfg.cb_timeout_sec,
     ));
     let metrics = Arc::new(tryingopen2api::prod_guard::Metrics::new());
+    let usage = Arc::new(tryingopen2api::prod_guard::UsageTracker::new(
+        cfg.rate_limit_max_keys,
+    ));
 
     let state = AppState {
         cfg: Arc::new(cfg),
@@ -143,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
         direct_quota,
         breaker,
         metrics,
+        usage,
     };
 
     let app = build_router(state);

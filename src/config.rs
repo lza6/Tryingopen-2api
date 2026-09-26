@@ -8,6 +8,30 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// 深合并：local 的非 null 字段覆盖 base；对象递归合并，数组/标量直接覆盖
+fn merge_json(base: serde_json::Value, local: serde_json::Value) -> Option<serde_json::Value> {
+    match (base, local) {
+        (serde_json::Value::Object(mut b), serde_json::Value::Object(l)) => {
+            for (k, v) in l {
+                if v.is_null() {
+                    continue;
+                }
+                match b.get(&k) {
+                    Some(bv) if bv.is_object() && v.is_object() => {
+                        if let Some(m) = merge_json(bv.clone(), v) {
+                            b.insert(k, m);
+                        }
+                    }
+                    _ => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+            Some(serde_json::Value::Object(b))
+        }
+        (_, v) => Some(v),
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// 监听地址
@@ -201,6 +225,25 @@ impl Config {
         } else {
             Config::default()
         };
+        // 本地覆盖通道：同目录 config.local.json 存在时，用其字段覆盖主配置
+        // （只合并显式出现的字段，不重置未出现字段；便于本机调试/部署差异，且不入 git）
+        if let Ok(local_raw) = std::fs::read_to_string("config.local.json") {
+            match serde_json::from_str::<serde_json::Value>(&local_raw) {
+                Ok(local_value) => {
+                    if let Ok(cfg_value) = serde_json::to_value(&cfg) {
+                        if let Some(merged) = merge_json(cfg_value, local_value) {
+                            match serde_json::from_value(merged) {
+                                Ok(m) => cfg = m,
+                                Err(e) => {
+                                    tracing::warn!("config.local.json 合并失败（保留主配置）: {e}")
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("config.local.json 解析失败（忽略）: {e}"),
+            }
+        }
         // 环境变量覆盖
         if let Ok(v) = std::env::var("LISTEN_ADDR") {
             cfg.listen_addr = v;

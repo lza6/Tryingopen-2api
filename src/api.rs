@@ -37,6 +37,8 @@ pub struct AppState {
     pub direct_quota: Arc<crate::prod_guard::RateLimiter>,
     pub breaker: Arc<crate::prod_guard::CircuitBreaker>,
     pub metrics: Arc<crate::prod_guard::Metrics>,
+    /// 每 key 用量统计（内存，有界）
+    pub usage: Arc<crate::prod_guard::UsageTracker>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -54,7 +56,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/proxies/refresh-free", post(handle_refresh_free))
         .route("/api/catalog/refresh", post(handle_catalog_refresh))
         .route("/api/guide", get(handle_guide))
-        .route("/api/config/api-key", post(handle_config_api_key));
+        .route("/api/config/api-key", post(handle_config_api_key))
+        .route("/api/usage", get(handle_usage));
     if state.cfg.metrics_enabled {
         router = router.route("/metrics", get(handle_metrics));
     }
@@ -198,6 +201,50 @@ fn request_key(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+/// key 脱敏显示：保留前 4 + 后 4，中间掩码
+fn mask_key(k: &str) -> String {
+    let chars: Vec<char> = k.chars().collect();
+    if chars.len() <= 8 {
+        "***".to_string()
+    } else {
+        let head: String = chars[..4].iter().collect();
+        let tail: String = chars[chars.len() - 4..].iter().collect();
+        format!("{head}***{tail}")
+    }
+}
+
+/// 记录每 key 用量（请求计数/成败/限流/上游错误/耗时）
+fn record_usage(
+    state: &AppState,
+    key: Option<&str>,
+    ok: bool,
+    is_429: bool,
+    is_5xx: bool,
+    is_upstream_err: bool,
+    elapsed: std::time::Duration,
+) {
+    // 匿名模式（api_keys 为空）无 key：统一记到哨兵 key，保证用量可见
+    let k = key.unwrap_or("__anonymous__");
+    {
+        state.usage.record(k, |u| {
+            u.requests += 1;
+            if ok {
+                u.ok += 1;
+            } else if is_429 {
+                u.rate_limited += 1;
+            } else if is_5xx {
+                u.errors_5xx += 1;
+            } else {
+                u.errors_4xx += 1;
+            }
+            if is_upstream_err {
+                u.upstream_errors += 1;
+            }
+            u.duration_ms_total += elapsed.as_millis() as u64;
+        });
+    }
+}
+
 /// 429 响应（带 Retry-After）
 fn rate_limited_response(e: ApiError, retry_after: u64) -> Response {
     let mut resp = (e.status(), e.openai_json()).into_response();
@@ -254,14 +301,21 @@ fn log_request(
             s.to_string()
         }
     });
-    match d {
-        Some(dd) => tracing::info!(
-            "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms detail={dd}"
-        ),
-        None => tracing::info!(
-            "REQ endpoint={endpoint} key={masked} model={model} stream={stream} status={status} took={ms}ms"
-        ),
-    }
+    // 结构化 JSON 行（便于日志采集/排障；detail 已按 redact 开关处理）
+    let detail_json = d.unwrap_or_default();
+    tracing::info!(
+        "REQ {}",
+        serde_json::json!({
+            "event": "request",
+            "endpoint": endpoint,
+            "key": masked,
+            "model": model,
+            "stream": stream,
+            "status": status,
+            "took_ms": ms,
+            "detail": detail_json,
+        })
+    );
 }
 
 /// 上游错误分类（用于 metrics）
@@ -750,6 +804,15 @@ async fn handle_chat_completions(
                 Some(&format!("retry_after={retry_after}s")),
                 start.elapsed(),
             );
+            record_usage(
+                &state,
+                Some(key.as_str()),
+                false,
+                true,
+                false,
+                false,
+                start.elapsed(),
+            );
             return rate_limited_response(
                 ApiError::rate_limited("请求过于频繁，请稍后重试"),
                 retry_after,
@@ -764,10 +827,20 @@ async fn handle_chat_completions(
         state
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
+        let rb_key = request_key(&headers);
+        record_usage(
+            &state,
+            rb_key.as_deref(),
+            false,
+            false,
+            true,
+            true,
+            start.elapsed(),
+        );
         log_request(
             state.cfg.redact_logs,
             "v1_chat_completions",
-            request_key(&headers).as_deref(),
+            rb_key.as_deref(),
             body.model.as_str(),
             body.stream,
             "503",
@@ -814,6 +887,16 @@ async fn handle_chat_completions(
                 .observe_duration(start.elapsed().as_secs_f64());
             state.sessions.touch(&thread_key).await;
             if body.stream {
+                let rb_key = request_key(&headers);
+                record_usage(
+                    &state,
+                    rb_key.as_deref(),
+                    true,
+                    false,
+                    false,
+                    false,
+                    start.elapsed(),
+                );
                 log_request(
                     state.cfg.redact_logs,
                     "v1_chat_completions",
@@ -847,14 +930,33 @@ async fn handle_chat_completions(
                         Some(em),
                         start.elapsed(),
                     );
+                    record_usage(
+                        &state,
+                        request_key(&headers).as_deref(),
+                        false,
+                        false,
+                        true,
+                        true,
+                        start.elapsed(),
+                    );
                     return api_err_response(ApiError::upstream(format!(
                         "上游返回错误事件（可能被限流或模型不可用）: {em}"
                     )));
                 }
+                let rb_key = request_key(&headers);
+                record_usage(
+                    &state,
+                    rb_key.as_deref(),
+                    true,
+                    false,
+                    false,
+                    false,
+                    start.elapsed(),
+                );
                 log_request(
                     state.cfg.redact_logs,
                     "v1_chat_completions",
-                    request_key(&headers).as_deref(),
+                    rb_key.as_deref(),
                     &model,
                     false,
                     "200",
@@ -931,6 +1033,17 @@ async fn handle_chat_completions(
                 Some(e.message()),
                 start.elapsed(),
             );
+            let is_5xx = e.status().is_server_error();
+            let is_429 = e.status().as_u16() == 429;
+            record_usage(
+                &state,
+                request_key(&headers).as_deref(),
+                false,
+                is_429,
+                is_5xx,
+                is_5xx,
+                start.elapsed(),
+            );
             api_err_response(e)
         }
     }
@@ -989,6 +1102,37 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
                         msg
                     )));
                 }
+                // 429 + 上游建议 cheaperFallbackId → 后续轮次换到建议模型重试
+                // （不在同一被限流出口上重试建议模型：上游按 IP 限流，同出口大概率仍 429）
+                if is_429 {
+                    if let Some(cf) = state
+                        .registry
+                        .meta(&req.model)
+                        .await
+                        .and_then(|m| m.cheaper_fallback)
+                    {
+                        if !cf.is_empty() && cf != req.model {
+                            tracing::info!(
+                                "MODEL_DOWNGRADE via cheaperFallback {} -> {} (attempt={})",
+                                req.model,
+                                cf,
+                                attempt + 1
+                            );
+                            let mut fallback_req = req.clone();
+                            fallback_req.model = cf.clone();
+                            // 下一轮用建议模型 + 新出口重试（同轮不再发第二次请求，省配额）
+                            return upgrade_retry(
+                                state,
+                                fallback_req,
+                                max,
+                                attempt + 1,
+                                &cooldown,
+                                hourly,
+                            )
+                            .await;
+                        }
+                    }
+                }
                 if crate::upstream::is_chat_too_long_error(&msg) {
                     return Err(ApiError::bad_request(
                         "上游拒绝：当前对话文本过长（HTTP 413）。请新开对话，或减少历史消息后再试。",
@@ -1044,6 +1188,62 @@ async fn try_rounds(state: &AppState, req: &StreamRequest) -> Result<reqwest::Re
             max, detail
         )))
     }
+}
+
+/// cheaperFallback 降级后的继续轮换：用建议模型从下一出口开始重试
+/// （与 try_rounds 主循环同语义：住宅→免费→直连兜底，全部失败返回限流错误）
+async fn upgrade_retry(
+    state: &AppState,
+    fallback_req: crate::upstream::StreamRequest,
+    max: usize,
+    start_attempt: usize,
+    cooldown: &[u32],
+    hourly: usize,
+) -> Result<reqwest::Response, ApiError> {
+    for attempt in start_attempt..max {
+        let proxy = match state
+            .pool
+            .acquire(Some("residential"), hourly, cooldown)
+            .await
+        {
+            Some(u) => Some(u),
+            None => state.pool.acquire(Some("free"), hourly, cooldown).await,
+        };
+        match state.client.stream(&fallback_req, proxy.as_deref()).await {
+            Ok(resp) => {
+                if let Some(u) = &proxy {
+                    state.pool.mark_success(u).await;
+                }
+                tracing::debug!(
+                    "PROXY_OK attempt={} model={} proxy={} (cheaperFallback)",
+                    attempt + 1,
+                    fallback_req.model,
+                    proxy.as_deref().unwrap_or("direct")
+                );
+                return Ok(resp);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let is_429 = msg.starts_with("upstream-429");
+                if let Some(u) = &proxy {
+                    state.pool.mark_failure(u, is_429, cooldown).await;
+                }
+                if crate::upstream::is_model_paused_error(&msg)
+                    || crate::upstream::is_chat_too_long_error(&msg)
+                {
+                    return Err(ApiError::upstream(format!(
+                        "模型当前不可用（cheaperFallback 尝试 {}）: {}",
+                        fallback_req.model, msg
+                    )));
+                }
+                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt.min(3) as u32))).await;
+            }
+        }
+    }
+    Err(ApiError::rate_limited(format!(
+        "TryingOpen 全部出口限流中（含 cheaperFallback {}）：请稍后重试",
+        fallback_req.model
+    )))
 }
 
 /// 非流式收集结果
@@ -1253,6 +1453,15 @@ async fn handle_claude_messages(
                 Some(&format!("retry_after={retry_after}s")),
                 start.elapsed(),
             );
+            record_usage(
+                &state,
+                Some(key.as_str()),
+                false,
+                true,
+                false,
+                false,
+                start.elapsed(),
+            );
             return rate_limited_response(
                 ApiError::rate_limited("请求过于频繁，请稍后重试"),
                 retry_after,
@@ -1266,10 +1475,20 @@ async fn handle_claude_messages(
         state
             .metrics
             .observe_duration(start.elapsed().as_secs_f64());
+        let cb_key = request_key(&headers);
+        record_usage(
+            &state,
+            cb_key.as_deref(),
+            false,
+            false,
+            true,
+            true,
+            start.elapsed(),
+        );
         log_request(
             state.cfg.redact_logs,
             "v1_messages",
-            request_key(&headers).as_deref(),
+            cb_key.as_deref(),
             body.model.as_str(),
             body.stream,
             "503",
@@ -1398,6 +1617,16 @@ async fn handle_claude_messages(
                 .observe_duration(start.elapsed().as_secs_f64());
             state.sessions.touch(&thread_key).await;
             if body.stream {
+                let cb_key = request_key(&headers);
+                record_usage(
+                    &state,
+                    cb_key.as_deref(),
+                    true,
+                    false,
+                    false,
+                    false,
+                    start.elapsed(),
+                );
                 log_request(
                     state.cfg.redact_logs,
                     "v1_messages",
@@ -1438,6 +1667,15 @@ async fn handle_claude_messages(
                     Some(em),
                     start.elapsed(),
                 );
+                record_usage(
+                    &state,
+                    request_key(&headers).as_deref(),
+                    false,
+                    false,
+                    true,
+                    true,
+                    start.elapsed(),
+                );
                 return api_err_response_anthropic(ApiError::upstream(format!(
                     "上游返回错误事件（可能被限流或模型不可用）: {em}"
                 )));
@@ -1473,10 +1711,20 @@ async fn handle_claude_messages(
                     })
                 })
                 .unwrap_or(json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }));
+            let cb_key = request_key(&headers);
+            record_usage(
+                &state,
+                cb_key.as_deref(),
+                true,
+                false,
+                false,
+                false,
+                start.elapsed(),
+            );
             log_request(
                 state.cfg.redact_logs,
                 "v1_messages",
-                request_key(&headers).as_deref(),
+                cb_key.as_deref(),
                 &model,
                 false,
                 "200",
@@ -1525,6 +1773,17 @@ async fn handle_claude_messages(
                 Some(e.message()),
                 start.elapsed(),
             );
+            let is_5xx = e.status().is_server_error();
+            let is_429 = e.status().as_u16() == 429;
+            record_usage(
+                &state,
+                request_key(&headers).as_deref(),
+                false,
+                is_429,
+                is_5xx,
+                is_5xx,
+                start.elapsed(),
+            );
             api_err_response_anthropic(e)
         }
     }
@@ -1562,6 +1821,15 @@ async fn handle_responses(
     }
     if let Some(key) = request_key(&headers) {
         if let Err(retry_after) = state.limiter.check(&key) {
+            record_usage(
+                &state,
+                Some(key.as_str()),
+                false,
+                true,
+                false,
+                false,
+                start.elapsed(),
+            );
             return rate_limited_response(
                 ApiError::rate_limited("请求过于频繁，请稍后重试"),
                 retry_after,
@@ -1569,6 +1837,16 @@ async fn handle_responses(
         }
     }
     if !state.breaker.allow() {
+        let cb_key = request_key(&headers);
+        record_usage(
+            &state,
+            cb_key.as_deref(),
+            false,
+            false,
+            true,
+            true,
+            start.elapsed(),
+        );
         return cb_open_response();
     }
     let created = chrono::Utc::now().timestamp();
@@ -1656,10 +1934,20 @@ async fn handle_responses(
                 tc.as_ref().map(|t| t.id.as_str()),
                 nr.usage.as_ref(),
             );
+            let u_key = request_key(&headers);
+            record_usage(
+                &state,
+                u_key.as_deref(),
+                true,
+                false,
+                false,
+                false,
+                start.elapsed(),
+            );
             log_request(
                 state.cfg.redact_logs,
                 "v1_responses",
-                request_key(&headers).as_deref(),
+                u_key.as_deref(),
                 &model,
                 false,
                 "200",
@@ -1683,6 +1971,17 @@ async fn handle_responses(
                 body.stream,
                 "err",
                 Some(e.message()),
+                start.elapsed(),
+            );
+            let is_5xx = e.status().is_server_error();
+            let is_429 = e.status().as_u16() == 429;
+            record_usage(
+                &state,
+                request_key(&headers).as_deref(),
+                false,
+                is_429,
+                is_5xx,
+                is_5xx,
                 start.elapsed(),
             );
             api_err_response(e)
@@ -1726,6 +2025,41 @@ async fn handle_catalog_refresh(State(state): State<AppState>, headers: HeaderMa
     }
 }
 
+/// GET /api/usage：每 key 用量统计（鉴权与 /api/* 一致）
+async fn handle_usage(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        return api_err_response(e);
+    }
+    let me = request_key(&headers);
+    let all = state.usage.all();
+    let mine = me.as_deref().and_then(|k| state.usage.get(k));
+    let total_requests: u64 = all.iter().map(|(_, u)| u.requests).sum();
+    let total_ok: u64 = all.iter().map(|(_, u)| u.ok).sum();
+    let masked_me = me
+        .as_deref()
+        .map(mask_key)
+        .unwrap_or_else(|| "-".to_string());
+    Json(json!({
+        "ok": true,
+        "current_key": masked_me,
+        "usage": mine.map(|u| json!({
+            "requests": u.requests,
+            "ok": u.ok,
+            "errors_4xx": u.errors_4xx,
+            "errors_5xx": u.errors_5xx,
+            "rate_limited": u.rate_limited,
+            "upstream_errors": u.upstream_errors,
+            "duration_ms_total": u.duration_ms_total,
+        })),
+        "summary": {
+            "tracked_keys": all.len(),
+            "total_requests": total_requests,
+            "total_ok": total_ok,
+        }
+    }))
+    .into_response()
+}
+
 async fn handle_guide(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
         return api_err_response(e);
@@ -1739,6 +2073,7 @@ async fn handle_guide(State(state): State<AppState>, headers: HeaderMap) -> Resp
         "proxy_count": state.pool.len().await,
         "base_url": format!("http://{}/v1", state.cfg.listen_addr),
         "upstream": state.cfg.upstream_base_url,
+        "usage_total_requests": state.usage.all().iter().map(|(_, u)| u.requests).sum::<u64>(),
         "note": "完全匿名：无需 Cookie/Domain/Key（每 24h UTC 日约 20 次，代理池自动轮换）"
     })).into_response()
 }

@@ -182,3 +182,40 @@ fn host_port_masked() {
 fn host_port_of(url: &str) -> String {
     safe_host_port(url)
 }
+
+#[test]
+fn catalog_new_capability_fields() {
+    let c = catalog();
+    let kimi = c
+        .iter()
+        .find(|m| m.id == "moonshotai/kimi-k3")
+        .expect("kimi-k3");
+    // 上游 messageLimit / cheaperFallbackId 透传
+    assert_eq!(kimi.message_limit, Some(5));
+    assert_eq!(kimi.cheaper_fallback.as_deref(), Some("minimax/minimax-m3"));
+    // 推理能力默认标记（reasoning 模型）
+    let qwen = c.iter().find(|m| m.id == "qwen/qwen3.8-27b").expect("qwen");
+    assert!(qwen.reasoning);
+    // OpenAI 形状带新字段
+    let objs = tryingopen2api::models::openai_models(&c);
+    let km = objs
+        .iter()
+        .find(|m| m.id == "moonshotai/kimi-k3")
+        .expect("kimi obj");
+    assert_eq!(km.message_limit, Some(5));
+    assert_eq!(km.cheaper_fallback.as_deref(), Some("minimax/minimax-m3"));
+    assert!(km.reasoning);
+}
+
+#[test]
+fn upstream_chunk_parses_capability_fields() {
+    let chunk = r#"{id:"moonshotai/kimi-k3",name:"Kimi K3",maker:"Moonshot AI",context:"1M",pricePerMTok:15.0,supportsTools:!0,supportsImages:!0,supportsReasoning:!0,messageLimit:5,cheaperFallbackId:"minimax/minimax-m3"}"#;
+    let parsed = tryingopen2api::upstream::parse_catalog_chunk(chunk);
+    eprintln!("PARSED {:?}", parsed);
+    assert_eq!(parsed.len(), 1);
+    let m = &parsed[0];
+    assert_eq!(m.id, "moonshotai/kimi-k3");
+    assert_eq!(m.message_limit, Some(5));
+    assert_eq!(m.cheaper_fallback.as_deref(), Some("minimax/minimax-m3"));
+    assert!(m.reasoning);
+}

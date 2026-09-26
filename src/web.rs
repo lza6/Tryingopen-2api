@@ -126,8 +126,8 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
         <span style="color:var(--muted);font-size:12px">启动时自动抓取；失败保留内置静态目录</span>
       </div>
       <div class="tblwrap"><table id="model-table">
-        <thead><tr><th>模型 ID</th><th>名称</th><th>上下文</th><th>价格/M</th><th>工具</th><th>视觉</th></tr></thead>
-        <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+        <thead><tr><th>模型 ID</th><th>名称</th><th>上下文</th><th>价格/M</th><th>工具</th><th>视觉</th><th>思考</th></tr></thead>
+        <tbody><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
       </table></div>
     </div>
   </section>
@@ -282,7 +282,7 @@ async function loadModels() {
     try { const g = await j('/api/guide'); guideIds = g.models || []; } catch (e) {}
     for (const id of guideIds) { if (!metas[id]) metas[id] = { id }; }
     const ids = Object.keys(metas);
-    if (ids.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="empty">暂无模型</td></tr>'; return; }
+    if (ids.length === 0) { tb.innerHTML = '<tr><td colspan="7" class="empty">暂无模型</td></tr>'; return; }
     const rows = ids.map(id => {
       const m = metas[id] || {};
       const ctx = m.context || (m.context_window ? (m.context_window/1000) + 'k' : '-');
@@ -290,7 +290,10 @@ async function loadModels() {
       const price = (typeof pm === 'number' && pm > 0) ? '$' + pm.toFixed(2) : (typeof pm === 'number' && pm === 0 ? '免费' : (typeof pm === 'string' ? esc(pm) : '-'));
       const tools = (m.tools === true) ? '<span class="badge ok">工具</span>' : (m.tools === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
       const vision = (m.vision === true) ? '<span class="badge ok">视觉</span>' : (m.vision === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
-      return `<tr><td>${esc(id)}</td><td>${esc(m.label || m.owned_by || '-')}</td><td>${esc(ctx)}</td><td class="num">${price}</td><td>${tools}</td><td>${vision}</td></tr>`;
+      const reason = (m.reasoning === true) ? '<span class="badge ok">思考</span>' : (m.reasoning === false ? '-' : '<span class="badge warn" title="后端未返回能力字段">未知</span>');
+      const cap = (m.message_limit != null) ? ' <span class="chip" title="单会话消息数上限">限' + esc(String(m.message_limit)) + '轮</span>' : '';
+      const cheaper = (m.cheaper_fallback) ? ' <span class="chip" title="429/不可用时自动降级到该模型">↓' + esc(m.cheaper_fallback) + '</span>' : '';
+      return `<tr><td>${esc(id)}</td><td>${esc(m.label || m.owned_by || '-')}${cap}${cheaper}</td><td>${esc(ctx)}</td><td class="num">${price}</td><td>${tools}</td><td>${vision}</td><td>${reason}</td></tr>`;
     });
     tb.innerHTML = rows.join('');
   } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="empty">模型读取失败: ' + esc(e.message) + '</td></tr>'; toast('模型读取失败: ' + e.message); }
@@ -306,7 +309,7 @@ async function loadGuide() {
     const anthBase = base.replace(/\/v1$/, '');
     const key = (Array.isArray(API_KEYS) && API_KEYS.length > 0) ? API_KEYS[0] : (g.api_keys_configured ? '<需要有效 key>' : '面板已自动注入（空配置时生成会话级 key）');
     const models = (g.models && g.models.length) ? g.models.join('、') : '（目录为空，点击同步）';
-    live.innerHTML = `监听: ${esc(g.listen_addr || '-')}\nBase URL: ${esc(base)}\n模型数: ${esc(g.models ? g.models.length : '-')}（${esc(models)}）\n代理池: ${esc(g.proxy_count ?? '-')}\n上游: ${esc(g.upstream || '-')}\n密钥已配置: ${esc(g.api_keys_configured ? '是' : '否（建议先配置）')}`;
+    live.innerHTML = `监听: ${esc(g.listen_addr || '-')}\nBase URL: ${esc(base)}\n模型数: ${esc(g.models ? g.models.length : '-')}（${esc(models)}）\n代理池: ${esc(g.proxy_count ?? '-')}\n累计请求: ${esc(g.usage_total_requests ?? '-')}\n上游: ${esc(g.upstream || '-')}\n密钥已配置: ${esc(g.api_keys_configured ? '是' : '否（建议先配置）')}`;
     oa.innerHTML = `Base URL: ${esc(base)}\nAPI Key: ${esc(key)}\n模型: ${esc(models)}`;
     anth.innerHTML = `ANTHROPIC_BASE_URL=${esc(anthBase)}\nANTHROPIC_API_KEY=${esc(key)}`;
     py.innerHTML = `from openai import OpenAI\nclient = OpenAI(base_url="${esc(base)}", api_key="${esc(key)}")\nmodel = "${esc(g.models?.[0] || 'qwen/qwen3.8-27b')}"`;

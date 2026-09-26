@@ -193,6 +193,8 @@ impl UpstreamClient {
 /// 用与 providers/tryingopen 相同的正则从 JS chunk 提取模型目录
 pub fn parse_catalog_chunk(chunk: &str) -> Vec<crate::models::ModelMeta> {
     let re_price = regex::Regex::new(r#"pricePerMTok:([0-9.]+)"#).unwrap();
+    let re_ml = regex::Regex::new(r#"messageLimit:(\d+)"#).unwrap();
+    let re_cf = regex::Regex::new(r#"cheaperFallbackId:"([^"]*)""#).unwrap();
     let re = regex::Regex::new(
         r#"(?s)\{id:"([a-z0-9][a-z0-9.\-]*/[a-z0-9][a-z0-9.\-]*)",name:"([^"]+)".*?\}"#,
     )
@@ -225,6 +227,24 @@ pub fn parse_catalog_chunk(chunk: &str) -> Vec<crate::models::ModelMeta> {
             price_per_mtok: price_f,
             tools: flag("supportsTools"),
             vision: flag("supportsImages"),
+            reasoning: flag("supportsReasoning") || flag("supportsThinking"),
+            message_limit: field("messageLimit")
+                .and_then(|s| s.parse::<u32>().ok())
+                .or_else(|| {
+                    // 上游 JS chunk 中 messageLimit 是裸数字（如 messageLimit:5）
+                    re_ml
+                        .captures(seg)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str().parse::<u32>().unwrap_or(0))
+                        .filter(|&v| v > 0)
+                }),
+            cheaper_fallback: field("cheaperFallbackId").or_else(|| {
+                // 上游 JS chunk 键无引号（cheaperFallbackId:"xxx"）
+                re_cf
+                    .captures(seg)
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str().to_string())
+            }),
             source: "dynamic".into(),
         });
     }

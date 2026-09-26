@@ -209,6 +209,77 @@ impl CircuitBreaker {
     }
 }
 
+// ── UsageTracker：每 key 用量统计（内存环形缓冲，有界防无界增长） ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KeyUsage {
+    pub requests: u64,
+    pub ok: u64,
+    pub errors_4xx: u64,
+    pub errors_5xx: u64,
+    pub rate_limited: u64,
+    pub upstream_errors: u64,
+    pub duration_ms_total: u64,
+}
+
+#[derive(Debug)]
+pub struct UsageTracker {
+    max_keys: usize,
+    inner: Mutex<HashMap<String, KeyUsage>>,
+    sweep_counter: AtomicU64,
+}
+
+impl UsageTracker {
+    pub fn new(max_keys: usize) -> Self {
+        Self {
+            max_keys: max_keys.max(1),
+            inner: Mutex::new(HashMap::new()),
+            sweep_counter: AtomicU64::new(0),
+        }
+    }
+
+    pub fn record(&self, key: &str, f: impl FnOnce(&mut KeyUsage)) {
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let n = self.sweep_counter.fetch_add(1, Ordering::Relaxed);
+        // 有界：每次写入前确保 map 不超过 max_keys。
+        // 新 key 达到上限时，按请求量淘汰最少使用的 key，给新 key 记录机会
+        // （不能只靠周期性 sweep：预插入守卫会使「满时淘汰」变成不可达死代码）
+        if !map.contains_key(key) && map.len() >= self.max_keys {
+            let victim = map
+                .iter()
+                .min_by_key(|(_, u)| u.requests)
+                .map(|(k, _)| k.clone());
+            if let Some(v) = victim {
+                map.remove(&v);
+            }
+        }
+        let e = map.entry(key.to_string()).or_default();
+        f(e);
+        let _ = n; // 保留 sweep_counter 扩展点（未来可做周期全量清理）
+    }
+
+    pub fn get(&self, key: &str) -> Option<KeyUsage> {
+        self.inner
+            .lock()
+            .map(|m| m.get(key).copied())
+            .unwrap_or(None)
+    }
+
+    pub fn all(&self) -> Vec<(String, KeyUsage)> {
+        let m = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut v: Vec<_> = m.iter().map(|(k, u)| (k.clone(), *u)).collect();
+        v.sort_by_key(|b| std::cmp::Reverse(b.1.requests));
+        v
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.lock().map(|m| m.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 // ── Metrics：Prometheus 文本指标 ───────────────────────────────────
 
 #[derive(Debug, Default)]
@@ -437,6 +508,48 @@ mod tests {
         // 第 3 次起拒绝，且 count 不再增长（窗口剩余不会被耗尽）
         assert!(rl.check_at("k", t0 + Duration::from_secs(2)).is_err());
         assert!(rl.check_at("k", t0 + Duration::from_secs(3)).is_err());
+    }
+
+    #[test]
+    fn usage_tracker_records_and_bounds() {
+        let t = UsageTracker::new(3);
+        t.record("a", |u| u.requests += 10);
+        t.record("b", |u| u.requests += 5);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.get("a").unwrap().requests, 10);
+        // 满 3 后新 key 触发淘汰：淘汰请求量最低的 key，新 key 入表
+        t.record("c", |u| u.requests += 1);
+        assert_eq!(t.len(), 3);
+        t.record("d", |u| u.requests += 3);
+        assert_eq!(t.len(), 3);
+        // 请求量最低的 c 被淘汰，d 入表
+        assert!(t.get("c").is_none(), "c 应被淘汰（请求量最低）");
+        assert_eq!(t.get("d").unwrap().requests, 3);
+        // 活跃 key a/b 保留
+        assert!(t.get("a").is_some());
+        assert!(t.get("b").is_some());
+        let all = t.all();
+        for w in all.windows(2) {
+            assert!(w[0].1.requests >= w[1].1.requests);
+        }
+    }
+
+    #[test]
+    fn usage_tracker_all_sorted_and_empty() {
+        let t = UsageTracker::new(8);
+        assert!(t.all().is_empty());
+        t.record("x", |u| {
+            u.requests += 5;
+            u.upstream_errors += 2;
+        });
+        t.record("y", |u| {
+            u.requests += 3;
+            u.rate_limited += 1;
+        });
+        let all = t.all();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].0, "x");
+        assert_eq!(all[1].0, "y");
     }
 
     #[test]

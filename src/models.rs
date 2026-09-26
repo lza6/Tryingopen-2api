@@ -28,6 +28,15 @@ pub struct ModelMeta {
     pub tools: bool,
     /// 支持图片输入
     pub vision: bool,
+    /// 支持思考/推理（reasoning_* SSE 事件）
+    #[serde(default)]
+    pub reasoning: bool,
+    /// 单会话上游最大消息数上限（如 kimi-k3=5；None=无限制）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_limit: Option<u32>,
+    /// 上游建议的降级模型（cheaperFallbackId；429/不可用时优先于此再走 fallback_models）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cheaper_fallback: Option<String>,
     /// 目录来源：dynamic（上游抓取）/ static（内置兜底；抓取失败时即 fallback 状态）
     #[serde(default = "default_source")]
     pub source: String,
@@ -41,7 +50,7 @@ fn default_source() -> String {
 pub fn catalog() -> Vec<ModelMeta> {
     let mut v = Vec::new();
     macro_rules! m {
-        ($id:expr, $label:expr, $family:expr, $ctx:expr, $price:expr, $tools:expr, $vision:expr) => {
+        ($id:expr, $label:expr, $family:expr, $ctx:expr, $price:expr, $tools:expr, $vision:expr, $reasoning:expr, $limit:expr, $cheaper:expr) => {
             v.push(ModelMeta {
                 id: $id.into(),
                 label: $label.into(),
@@ -51,6 +60,9 @@ pub fn catalog() -> Vec<ModelMeta> {
                 price_per_mtok: $price,
                 tools: $tools,
                 vision: $vision,
+                reasoning: $reasoning,
+                message_limit: $limit,
+                cheaper_fallback: $cheaper,
                 source: "static".into(),
             });
         };
@@ -62,7 +74,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "262k",
         3.2,
         true,
-        true
+        true,
+        true,
+        None,
+        None
     );
     m!(
         "nvidia/nemotron-3.5-lightning",
@@ -71,7 +86,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "262k",
         0.25,
         true,
-        false
+        false,
+        true,
+        None,
+        None
     );
     m!(
         "deepseek/deepseek-v4-flash-0731",
@@ -80,7 +98,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "1M",
         0.18,
         true,
-        false
+        false,
+        true,
+        None,
+        None
     );
     m!(
         "deepseek/deepseek-v4-pro-0813",
@@ -89,7 +110,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "1M",
         1.98,
         true,
-        false
+        false,
+        true,
+        None,
+        None
     );
     m!(
         "google/gemma-4-31b-it",
@@ -98,7 +122,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "256k",
         0.4,
         true,
-        true
+        true,
+        true,
+        None,
+        None
     );
     m!(
         "google/gemma-4-26b-a4b-it",
@@ -107,7 +134,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "256k",
         0.4,
         true,
-        true
+        true,
+        true,
+        None,
+        None
     );
     m!(
         "openai/gpt-oss-120b",
@@ -116,7 +146,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "128k",
         0.6,
         true,
-        false
+        false,
+        false,
+        None,
+        None
     );
     m!(
         "meta/muse-glimmer-30b",
@@ -125,7 +158,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "131k",
         1.5,
         true,
-        false
+        false,
+        false,
+        None,
+        None
     );
     m!(
         "moonshotai/kimi-k3",
@@ -134,7 +170,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "1M",
         15.0,
         true,
-        true
+        true,
+        true,
+        Some(5),
+        Some("minimax/minimax-m3".to_string())
     );
     m!(
         "minimax/minimax-m3",
@@ -143,7 +182,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "1M",
         1.2,
         true,
-        true
+        true,
+        true,
+        None,
+        None
     );
     m!(
         "thinkingmachines/inkling-small",
@@ -152,7 +194,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "524k",
         1.2,
         true,
-        true
+        true,
+        true,
+        None,
+        None
     );
     m!(
         "z-ai/glm-5.2",
@@ -161,7 +206,10 @@ pub fn catalog() -> Vec<ModelMeta> {
         "1M",
         1.54,
         true,
-        false
+        false,
+        true,
+        None,
+        None
     );
     v
 }
@@ -341,6 +389,14 @@ pub struct OpenAIModelObject {
     pub tools: bool,
     /// 支持图片输入
     pub vision: bool,
+    /// 支持思考/推理
+    pub reasoning: bool,
+    /// 单会话消息数上限（上游 messageLimit；None=无限制）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_limit: Option<u32>,
+    /// 上游建议降级模型（cheaperFallbackId）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cheaper_fallback: Option<String>,
 }
 
 /// Anthropic /v1/models 形状
@@ -352,6 +408,8 @@ pub struct AnthropicModelObject {
     pub input_modalities: Vec<String>,
     pub output_modalities: Vec<String>,
     pub context_window: i64,
+    /// 支持思考/推理
+    pub reasoning: bool,
 }
 
 pub fn openai_models(list: &[ModelMeta]) -> Vec<OpenAIModelObject> {
@@ -367,6 +425,9 @@ pub fn openai_models(list: &[ModelMeta]) -> Vec<OpenAIModelObject> {
             price_per_mtok: m.price_per_mtok,
             tools: m.tools,
             vision: m.vision,
+            reasoning: m.reasoning,
+            message_limit: m.message_limit,
+            cheaper_fallback: m.cheaper_fallback.clone(),
         })
         .collect()
 }
@@ -384,6 +445,7 @@ pub fn anthropic_models(list: &[ModelMeta]) -> Vec<AnthropicModelObject> {
             },
             output_modalities: vec!["text".into()],
             context_window: m.context_window,
+            reasoning: m.reasoning,
         })
         .collect()
 }
