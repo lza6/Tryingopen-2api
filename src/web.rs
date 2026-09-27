@@ -35,6 +35,7 @@ table { width:100%; border-collapse:collapse; font-size:13px; }
 td.num { text-align:right; }
 th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); }
 th { color:var(--muted); font-weight:500; }
+#model-table thead th { position:sticky; top:0; background:var(--table-head-bg, var(--card)); z-index:1; }
 .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; }
 .badge.ok { background:#0c3b2e; color:var(--ok); } .badge.warn { background:#3d2f0a; color:var(--warn); }
 .badge.err { background:#3b0f0f; color:var(--err); } .badge.dim { background:#1c2530; color:var(--muted); }
@@ -59,6 +60,10 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
 #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--accent); padding:10px 20px; border-radius:10px; display:none; z-index:100; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.5); }
 .tblwrap { overflow-x:auto; }
 .guide-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-family:ui-monospace,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; }
+/* 移动端触摸目标：≥44px（Apple/Google 可访问性下限），桌面断点外保持原外观 */
+@media (max-width:640px) {
+  button.sm, button.ghost { min-height:44px; }
+}
 </style>
 </head>
 <body>
@@ -308,7 +313,7 @@ async function loadModels() {
       return `<tr><td>${esc(id)}</td><td>${esc(m.label || m.owned_by || '-')}${cap}${cheaper}</td><td>${esc(ctx)}</td><td class="num">${price}</td><td>${tools}</td><td>${vision}</td><td>${reason}</td></tr>`;
     });
     tb.innerHTML = rows.join('');
-  } catch (e) { tb.innerHTML = '<tr><td colspan="6" class="empty">模型读取失败: ' + esc(e.message) + '</td></tr>'; toast('模型读取失败: ' + e.message); }
+  } catch (e) { tb.innerHTML = '<tr><td colspan="7" class="empty">模型读取失败: ' + esc(e.message) + '</td></tr>'; toast('模型读取失败: ' + e.message); }
 }
 async function loadGuide() {
   const live = document.getElementById('guide-live');
@@ -388,8 +393,13 @@ async function clearKeys() {
 }
 document.getElementById('btn-genkey').onclick = genKey;
 document.getElementById('btn-clearkeys').onclick = clearKeys;
-loadOverview(); refreshProxies(); loadModels();
-setInterval(() => { loadOverview(); refreshProxies(); }, 15000);
+// 合并轮询：总览 + 代理池并行刷新，互不阻塞；两函数内部各自独立 try/catch + toast，
+// allSettled 保证单方失败不整体报错，全部 settle 后 DOM 完成渲染
+async function refreshPanel() {
+  await Promise.allSettled([loadOverview(), refreshProxies()]);
+}
+loadModels(); refreshPanel();
+setInterval(refreshPanel, 15000);
 </script>
 </body>
 </html>

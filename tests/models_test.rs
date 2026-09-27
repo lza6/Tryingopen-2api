@@ -43,6 +43,84 @@ async fn normalize_and_resolve() {
 }
 
 #[tokio::test]
+async fn replace_from_parsed_preserves_static_fallback_meta() {
+    // 动态目录整体替换静态目录时，若上游记录不含 message_limit / cheaper_fallback，
+    // 必须保留静态兜底元数据（kimi messageLimit=5 / cheaper=minimax/mimimax-m3），
+    // 否则 docs/PROTOCOL.md「静态目录仍保留 kimi messageLimit=5/cheaper 兜底元数据」失守。
+    let r = ModelRegistry::new();
+
+    // 静态兜底存在：kimi 有 message_limit=Some(5)、cheaper_fallback=Some(minimax/mimimax-m3)
+    let static_kimi = r.meta("moonshotai/kimi-k3").await.unwrap();
+    assert_eq!(static_kimi.message_limit, Some(5));
+    assert!(static_kimi.cheaper_fallback.is_some());
+
+    // 上游动态记录：只带基础能力字段，不含 messageLimit/cheaperFallbackId（2026-09-26 实测）
+    let dynamic = vec![
+        crate_meta("qwen/qwen3.8-27b", 262 * 1024, None, None),
+        crate_meta("moonshotai/kimi-k3", 1024 * 1024, None, None),
+    ];
+    let replaced = r.replace_from_parsed(dynamic).await;
+    assert_eq!(replaced, 2);
+
+    let kimi = r.meta("moonshotai/kimi-k3").await.unwrap();
+    assert_eq!(
+        kimi.message_limit,
+        Some(5),
+        "动态替换不得清空静态 message_limit 兜底"
+    );
+    assert!(
+        kimi.cheaper_fallback.is_some(),
+        "动态替换不得清空静态 cheaper_fallback 兜底"
+    );
+
+    // 上游若显式提供新值，则用新值覆盖（优先级：动态 > 静态兜底）
+    let dynamic_override = vec![crate_meta(
+        "moonshotai/kimi-k3",
+        1024 * 1024,
+        Some(3),
+        Some("minimax/minimax-m3".to_string()),
+    )];
+    r.replace_from_parsed(dynamic_override).await;
+    let kimi2 = r.meta("moonshotai/kimi-k3").await.unwrap();
+    assert_eq!(kimi2.message_limit, Some(3), "动态显式值应覆盖静态兜底");
+}
+
+#[tokio::test]
+async fn replace_from_parsed_empty_records_keeps_static() {
+    // 空记录（上游抓取失败）→ 短路返回现状长度，保留静态目录不被清空
+    let r = ModelRegistry::new();
+    let before = r.all().await.len();
+    let n = r.replace_from_parsed(vec![]).await;
+    assert_eq!(n, before, "空记录应返回现有目录长度");
+    let after = r.all().await.len();
+    assert_eq!(after, before, "空记录不得清空静态目录");
+    // 且静态兜底仍可查
+    assert!(r.meta("moonshotai/kimi-k3").await.is_some());
+}
+
+fn crate_meta(
+    id: &str,
+    context_window: i64,
+    limit: Option<u32>,
+    cheaper: Option<String>,
+) -> tryingopen2api::models::ModelMeta {
+    tryingopen2api::models::ModelMeta {
+        id: id.into(),
+        label: id.into(),
+        family: "Test".into(),
+        context: String::new(),
+        context_window,
+        price_per_mtok: 0.0,
+        tools: true,
+        vision: true,
+        reasoning: false,
+        message_limit: limit,
+        cheaper_fallback: cheaper,
+        source: "dynamic".into(),
+    }
+}
+
+#[tokio::test]
 async fn proxy_pool_cooldown_and_rotation() {
     let p = ProxyPool::new();
     assert_eq!(p.len().await, 0);

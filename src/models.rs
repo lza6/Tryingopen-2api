@@ -355,12 +355,36 @@ impl ModelRegistry {
     }
 
     /// 用上游首页/JS chunk 解析结果替换静态目录（抓不到则保留静态）
+    ///
+    /// 保留兜底元数据：上游动态记录常不含 `messageLimit`/`cheaperFallbackId`
+    /// （2026-09-26 实测上游 chunk 已不带这三字段），直接整体替换会把静态兜底
+    /// （如 kimi messageLimit=5 / cheaper=minimax-m3）清空。这里对动态记录中
+    /// 缺失的字段回填静态目录同 id 的既有值；上游显式提供的新值优先覆盖。
     pub async fn replace_from_parsed(&self, records: Vec<ModelMeta>) -> usize {
         if records.is_empty() {
             return self.inner.read().await.len();
         }
+        // 静态兜底快照（id → 元数据），用于回填缺失字段
+        let static_meta: std::collections::HashMap<String, ModelMeta> = {
+            let list = self.inner.read().await;
+            list.iter().map(|m| (m.id.clone(), m.clone())).collect()
+        };
         let mut list = self.inner.write().await;
-        *list = records;
+        let mut merged: Vec<ModelMeta> = Vec::with_capacity(records.len());
+        for mut m in records {
+            if m.message_limit.is_none() {
+                if let Some(prev) = static_meta.get(&m.id) {
+                    m.message_limit = prev.message_limit;
+                }
+            }
+            if m.cheaper_fallback.is_none() {
+                if let Some(prev) = static_meta.get(&m.id) {
+                    m.cheaper_fallback = prev.cheaper_fallback.clone();
+                }
+            }
+            merged.push(m);
+        }
+        *list = merged;
         // 剪除 offline 标记中已不在新目录的 id（目录更新 = 上游最新状态）
         {
             let mut offline = self.forced_offline.write().await;

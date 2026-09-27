@@ -148,8 +148,11 @@ async fn handle_dashboard(State(state): State<AppState>, headers: HeaderMap) -> 
         }
     }
     // 注入数量上限：只暴露前 N 个（防 key 过多时整页 HTML 膨胀/泄漏面）
-    let keys_json = serde_json::to_string(&keys.iter().take(64).collect::<Vec<_>>())
-        .unwrap_or_else(|_| "[]".into());
+    // H1 纵深：注入前做 JS 转义（serde_json 不转义 < >，`</script>` 可提前闭合标签 → XSS）
+    let keys_json = escape_json_for_script(
+        &serde_json::to_string(&keys.iter().take(64).collect::<Vec<_>>())
+            .unwrap_or_else(|_| "[]".into()),
+    );
     let html = crate::web::INDEX_HTML.replace("__API_KEYS_JSON__", &keys_json);
     Html(html).into_response()
 }
@@ -199,6 +202,55 @@ fn request_key(headers: &HeaderMap) -> Option<String> {
         return Some(x.to_string());
     }
     None
+}
+
+/// 返回**实际通过鉴权**的 key（Bearer 与 x-api-key 都提供时，以 x-api-key 为最终归属）。
+///
+/// 修复 M1「嫁祸」：`check_api_key` 对两字段任一命中即放行，而旧 `request_key`
+/// 只取 Bearer。攻击者可带 `Bearer=<受害者key>` + `x-api-key=<自己的有效key>`
+/// 通过鉴权，若归属随 Bearer 会记到受害者 key 名下。这里 x-api-key 优先：
+/// Bearer 是每个客户端随手可写的标准头（`Authorization: Bearer sk-victim` 无需
+/// 持有该 key 的真实凭据也可能猜中/泄露传播），而 x-api-key 是同请求内唯一
+/// 无法用「受害者 key 填 Bearer」伪造的独立字段——两字段同现恒信任 x-api-key。
+/// 匿名模式返回 None，由调用方记哨兵 key。
+fn authenticated_key(
+    cfg: &Config,
+    api_keys: &std::sync::RwLock<Vec<String>>,
+    headers: &HeaderMap,
+) -> Option<String> {
+    let keys = api_keys.read().map(|g| g.clone()).unwrap_or_default();
+    if keys.is_empty() && cfg.api_keys.is_empty() {
+        return None;
+    }
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let bearer = auth.strip_prefix("Bearer ").unwrap_or("").trim();
+    let x_key = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    // x-api-key 命中优先（两字段同现时为真实身份）；仅 Bearer 时用 Bearer（标准客户端）
+    if !x_key.is_empty()
+        && (keys.iter().any(|k| k == x_key) || cfg.api_keys.iter().any(|k| k == x_key))
+    {
+        return Some(x_key.to_string());
+    }
+    if !bearer.is_empty()
+        && (keys.iter().any(|k| k == bearer) || cfg.api_keys.iter().any(|k| k == bearer))
+    {
+        return Some(bearer.to_string());
+    }
+    None
+}
+
+/// JS 安全转义：serde_json 不转义 `<`/`>`（合法 JSON），但注入 `<script>` 块后
+/// 会被 HTML 解析器提前闭合（`</script>` 即任意 JS 执行）。转为 `<`/`>`
+/// 后 JSON 解析仍还原原字符，但 HTML 解析器看到的是转义序列，无法闭合标签。
+fn escape_json_for_script(s: &str) -> String {
+    s.replace('<', "\\u003c").replace('>', "\\u003e")
 }
 
 /// key 脱敏显示：保留前 4 + 后 4，中间掩码
@@ -292,9 +344,9 @@ fn log_request(
     let ms = elapsed.as_millis();
     let d = detail.map(|s| {
         if redact {
-            // 截断 + 剥离常见密钥形态（sk-xxx / Bearer token）
+            // 截断 + 剥离常见密钥形态（sk-xxx / Bearer token；含连字符形态如 sk-to-<uuid>）
             let cut: String = s.chars().take(300).collect();
-            let re = regex::Regex::new(r"(?i)(sk-[a-z0-9]{8,}|bearer\s+[a-z0-9]{8,})")
+            let re = regex::Regex::new(r"(?i)(sk-[a-z0-9-]{8,}|bearer\s+[a-z0-9-]{8,})")
                 .unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
             re.replace_all(&cut, "***").into_owned()
         } else {
@@ -823,7 +875,7 @@ async fn handle_chat_completions(
         return api_err_response(e);
     }
     // 每 API Key 限流（公网防滥用）
-    if let Some(key) = request_key(&headers) {
+    if let Some(key) = authenticated_key(&state.cfg, &state.api_keys, &headers) {
         if let Err(retry_after) = state.limiter.check(&key) {
             state
                 .metrics
@@ -1477,7 +1529,7 @@ async fn handle_claude_messages(
         );
         return api_err_response_anthropic(e);
     }
-    if let Some(key) = request_key(&headers) {
+    if let Some(key) = authenticated_key(&state.cfg, &state.api_keys, &headers) {
         if let Err(retry_after) = state.limiter.check(&key) {
             state
                 .metrics
@@ -1881,7 +1933,7 @@ async fn handle_responses(
     if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
         return api_err_response(e);
     }
-    if let Some(key) = request_key(&headers) {
+    if let Some(key) = authenticated_key(&state.cfg, &state.api_keys, &headers) {
         if let Err(retry_after) = state.limiter.check(&key) {
             record_usage(
                 &state,
@@ -2093,7 +2145,7 @@ async fn handle_usage(State(state): State<AppState>, headers: HeaderMap) -> Resp
     if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
         return api_err_response(e);
     }
-    let me = request_key(&headers);
+    let me = authenticated_key(&state.cfg, &state.api_keys, &headers);
     let all = state.usage.all();
     let mine = me.as_deref().and_then(|k| state.usage.get(k));
     let total_requests: u64 = all.iter().map(|(_, u)| u.requests).sum();
@@ -2178,6 +2230,16 @@ async fn handle_config_api_key(
             let k = body.key.clone().unwrap_or_default().trim().to_string();
             if k.is_empty() {
                 return api_err_response(ApiError::bad_request("缺少 key"));
+            }
+            // 安全（H1）：动态 key 只允许安全字符 `[A-Za-z0-9_-]`，拒绝 `<>/"` 等
+            // 任意字节——防止把 `</script>` 之类注入 key 集、面板注入时闭合 script 标签形成 XSS
+            if !k
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return api_err_response(ApiError::bad_request(
+                    "key 只允许字母/数字/连字符/下划线（防注入）",
+                ));
             }
             if !keys.contains(&k) {
                 keys.push(k.clone());
@@ -2296,5 +2358,77 @@ mod tests {
         truncate_upstream_messages(&mut msgs, 16_000);
         assert_eq!(total_len(&msgs), 7);
         assert_eq!(msgs.len(), 2);
+    }
+
+    #[test]
+    fn json_script_escape_closes_injection() {
+        // H1：注入 <script> 块的 JSON 必须转义 < >，防 </script> 提前闭合
+        let raw = r#"["ok","</script><script>alert(1)</script>"]"#;
+        let safe = escape_json_for_script(raw);
+        assert!(!safe.contains("</script>"), "不得含可闭合标签序列: {safe}");
+        assert!(
+            safe.contains("\\u003c/script"),
+            "`<` 应按 JSON 转义为 \\u003c: {safe}"
+        );
+        // JSON 解析后仍还原原字符（`<` 是合法 JSON 转义，前端取到真实 key 值）
+        let parsed: Vec<String> = serde_json::from_str(&safe).unwrap();
+        assert_eq!(parsed[0], "ok");
+        assert!(parsed[1].contains("script"), "取值语义不变: {}", parsed[1]);
+    }
+
+    #[test]
+    fn authenticated_key_prefers_matched_credential() {
+        // M1：Bearer 与 x-api-key 同时提供时，x-api-key 为真实身份（防嫁祸受害者）
+        let cfg = crate::config::Config::default();
+        let keys = std::sync::RwLock::new(vec!["sk-victim".to_string(), "sk-attacker".to_string()]);
+        // 攻击者：Bearer=<受害者key> + x-api-key=<自己有效key> → 必须归属自己（sk-attacker），
+        // 否则限流/用量嫁祸受害者
+        let mut h = HeaderMap::new();
+        h.insert("authorization", "Bearer sk-victim".parse().unwrap());
+        h.insert("x-api-key", "sk-attacker".parse().unwrap());
+        assert_eq!(
+            authenticated_key(&cfg, &keys, &h).as_deref(),
+            Some("sk-attacker"),
+            "两字段同现时 x-api-key 优先，防嫁祸受害者"
+        );
+        // 两字段同为受害者本人（正常客户端双头一致性）→ 归属不变
+        let mut h3 = HeaderMap::new();
+        h3.insert("authorization", "Bearer sk-victim".parse().unwrap());
+        h3.insert("x-api-key", "sk-victim".parse().unwrap());
+        assert_eq!(
+            authenticated_key(&cfg, &keys, &h3).as_deref(),
+            Some("sk-victim")
+        );
+        // 仅 Bearer（标准客户端）→ 归属 Bearer
+        let mut h4 = HeaderMap::new();
+        h4.insert("authorization", "Bearer sk-victim".parse().unwrap());
+        assert_eq!(
+            authenticated_key(&cfg, &keys, &h4).as_deref(),
+            Some("sk-victim")
+        );
+        // 仅 x-api-key 有效（Bearer 无效值）→ 归属 x-api-key
+        let mut h2 = HeaderMap::new();
+        h2.insert("authorization", "Bearer nope".parse().unwrap());
+        h2.insert("x-api-key", "sk-attacker".parse().unwrap());
+        assert_eq!(
+            authenticated_key(&cfg, &keys, &h2).as_deref(),
+            Some("sk-attacker")
+        );
+        // 匿名模式（空 key）→ None（调用方记哨兵）
+        let empty = std::sync::RwLock::new(Vec::<String>::new());
+        assert_eq!(authenticated_key(&cfg, &empty, &h), None);
+    }
+
+    #[test]
+    fn redact_regex_covers_hyphen_key_forms() {
+        // M2：脱敏正则应覆盖 sk-to-<uuid> 连字符形态
+        let detail = "leaked sk-to-11223344556677889900aabbccddeeff in error";
+        let re = regex::Regex::new(r"(?i)(sk-[a-z0-9-]{8,}|bearer\s+[a-z0-9-]{8,})").unwrap();
+        let masked = re.replace_all(detail, "***");
+        assert!(
+            !masked.contains("sk-to-1122334455"),
+            "sk-to- 形态应被脱敏: {masked}"
+        );
+        assert!(masked.contains("***"), "应被替换为 ***");
     }
 }
