@@ -12,7 +12,7 @@ TryingOpen2API reimplements [tryingopen.com](https://www.tryingopen.com) free-ti
 - `config.local.json` deep-merge override
 - Web panel: reasoning badge / downgrade chips / cumulative request count
 
-Endpoints: /v1/chat/completions, /v1/messages, /v1/responses, /v1/models, /healthz, /metrics (auth), /api/proxies, /api/usage, /ui. Tests: 57 (fmt/clippy/57 tests green).
+Endpoints: /v1/chat/completions, /v1/messages, /v1/responses, /v1/models, /healthz, /metrics (auth), /api/proxies, /api/usage, /ui. Tests: 65 (fmt/clippy/65 tests green).
 
 - Upstream: https://www.tryingopen.com
 - Default listen: http://127.0.0.1:47831

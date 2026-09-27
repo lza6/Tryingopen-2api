@@ -109,6 +109,8 @@
 
 ### POST /api/config/api-key
 - `{"action":"generate"|"set"|"clear","key":optional}` → `{"ok":true,"key":...}`
+- **`set` 校验（v0.1.17）**：动态 key 只允许 `[A-Za-z0-9_-]`（防 `</script>` 注入面板）；generate 上限 64；clear 需 `admin_confirm:true` 且 config.json 配置了静态 api_keys 时禁止
+- **鉴权归属（v0.1.17）**：请求同时带 `Authorization: Bearer` 与 `x-api-key` 时，限流与用量以 `x-api-key` 为准（防用 Bearer 伪造受害者 key 嫁祸）
 
 ### GET /ui（Basic Auth 保护）
 - 配置 `ui_password` 后需 `Authorization: Basic base64(任意用户:密码)`

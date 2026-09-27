@@ -1,6 +1,7 @@
 # Workflow Status — TryingOpen2API 终局闭环总审计
 
-> 更新：2026-09-26（v0.1.12 已发布，终局第 4 轮闭环 + 缺口清零）
+> 更新：2026-09-27（v0.1.17 已发布）
+> 仓库：lza6/Tryingopen-2api（main 分支，v0.1.17，CI/CD 全绿）
 > 仓库：lza6/Tryingopen-2api（main 分支，v0.1.12 已发布，CI/CD 全绿）
 
 ## 产品定位
@@ -132,6 +133,18 @@ TryingOpen2API = Rust(axum) 免费模型 OpenAI/Anthropic 兼容本地网关：
 - [x] 公网 E2E：无 key 探活+安全拒绝（E2E-2026-09-26）；本地带 key 真实上游（E2E-local）；带生产 key 公网全量待用户提供 key 后补跑
 
 
+
+## v0.1.17（2026-09-27，面板轮询合并 + 移动端 + 压测基线 + 安全加固）
+
+| 项 | 内容 | 状态 | 证据 |
+|---|---|---|---|
+| N1 | 面板轮询合并（refreshPanel + Promise.allSettled） | ✅ | web.rs；node JS 语法校验 + 结构断言 |
+| N2 | 移动端粘性表头 / ≥44px 触摸目标 / colspan 修正 | ✅ | web.rs @media + sticky；同批 |
+| N3 | 动态目录保留静态 messageLimit/cheaperFallback 兜底 | ✅ | models.rs 回填；kimi 字段 E2E 复验 message_limit=5/cheaper；+1 测试 |
+| N4 | 安全：H1 key 注入 XSS、M1 限流归属嫁祸、M2 日志脱敏连字符 | ✅ | api.rs 字符集白名单 + JS 转义 + authenticated_key + 正则；+3 测试 |
+| N5 | 压测基线刷新 + lto thin/fat 对比 | ✅ | results-20260927.json 三端点 200/200 p50 10-12ms；fat −7.2%/编译+12min 保持 thin |
+| V1 | 门禁 | ✅ | fmt/clippy/65 tests 全绿（42+15+8） |
+| V2 | E2E | ✅ | healthz/models 200 + kimi 透传 + 401 + usage + 日志脱敏 + 面板 + 熔断 502→503（mock 5xx）；真实上游 200 待配额刷新复验 |
 
 ## v0.1.16（2026-09-27，协议对齐 + 错误可操作化）
 

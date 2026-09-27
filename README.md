@@ -6,7 +6,9 @@ TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开�
 
 **完全匿名**：tryingopen.com 的所有对话端点不需要 Cookie / 登录 / API Key。站点按「每 IP 每日约 20 次」限流（代理池轮换出口缓解），网关内置 **代理池自动故障轮换**（住宅代理文件 + 免费代理抓取双源，429 自动冷却换出口，指数退避重试，直连兜底）。
 
-> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。\n>\n > **v0.1.16（协议对齐 + 错误可操作化）**：模型能力字段透传（思考/消息数上限/降级建议）、429 按上游建议模型自动降级、每 key 用量统计（/api/usage）、请求日志结构化 JSON、config.local.json 局部覆盖。此前已含：代理池 44 源（免费源抓取，单轮预检注入上限 4500）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。
+>
+> **v0.1.17（面板轮询合并 + 移动端 + 压测基线 + 安全加固）**：面板状态轮询合并（消除双刷新闪烁）、移动端粘性表头/≥44px 触摸目标、动态目录保留静态 messageLimit/cheaperFallback 兜底、面板 key 注入 XSS 修复、限流归属防嫁祸、日志脱敏覆盖连字符 key、压测基线刷新 + lto thin/fat 对比。此前已含：模型能力字段透传（思考/消息数上限/降级建议）、429 按上游建议模型自动降级、每 key 用量统计（/api/usage）、请求日志结构化 JSON、config.local.json 局部覆盖、代理池 44 源（免费源抓取，单轮预检注入上限 4500）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -186,7 +188,7 @@ TryingOpen 站点（Next.js + Turbopack，完全匿名）：
 ## 八、测试
 
 ```bash
-cargo test   # 57 个测试：模型/协议/代理池/限流/熔断/metrics/用量统计 等
+cargo test   # 65 个测试：模型/协议/代理池/限流/熔断/metrics/用量统计/安全 等
 ```
 
 > 注：本机 rustdoc.exe 缺失导致 `cargo test --doc` 失败（chocolatey 安装问题），与代码无关；`cargo test --lib` / `cargo test --tests` 全部通过。

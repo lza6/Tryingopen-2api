@@ -1,0 +1,53 @@
+{
+  "tool": "tryingopen-2api bench.ps1",
+  "timestamp": "2026-09-27T08:48:42.6551446+08:00",
+  "base_url": "http://127.0.0.1:47831",
+  "concurrency": 20,
+  "requests": 200,
+  "stress_chat": false,
+  "rust": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "endpoints": [
+    {
+      "Endpoint": "healthz",
+      "Path": "/healthz",
+      "Method": "GET",
+      "Requests": 200,
+      "Succeeded": 200,
+      "Failed": 0,
+      "StatusCodes": "200x200",
+      "P50Ms": 10.3,
+      "P95Ms": 746.7,
+      "MaxMs": 1681.1,
+      "Rps": 118.97,
+      "Fail": false
+    },
+    {
+      "Endpoint": "v1_models",
+      "Path": "/v1/models",
+      "Method": "GET",
+      "Requests": 200,
+      "Succeeded": 200,
+      "Failed": 0,
+      "StatusCodes": "200x200",
+      "P50Ms": 11.4,
+      "P95Ms": 83.6,
+      "MaxMs": 196.2,
+      "Rps": 1019.34,
+      "Fail": false
+    },
+    {
+      "Endpoint": "api_proxies",
+      "Path": "/api/proxies",
+      "Method": "GET",
+      "Requests": 200,
+      "Succeeded": 200,
+      "Failed": 0,
+      "StatusCodes": "200x200",
+      "P50Ms": 10.6,
+      "P95Ms": 129.7,
+      "MaxMs": 334.7,
+      "Rps": 597.47,
+      "Fail": false
+    }
+  ]
+}

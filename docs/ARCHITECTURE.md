@@ -8,19 +8,21 @@ src/
 ├── lib.rs           # 模块声明
 ├── api.rs           # axum 路由 + OpenAI/Anthropic 桥接 + 代理轮换重试
 ├── config.rs        # 配置解析（config.json + 环境变量）
-├── models.rs        # 模型目录（12 静态 + 动态同步）+ 归一化/降级
+├── models.rs        # 模型目录（12 静态 + 动态同步（实测 24 模型））+ 归一化/降级
 ├── upstream.rs      # TryingOpen HTTP 客户端（/api/open 对话 + 目录抓取）
 ├── proxy_pool.rs    # 代理池（住宅+免费双源，冷却/轮换/健康分/粘滞）
 ├── free_proxy.rs    # 免费代理抓取器（44 源 + 公网 IP 过滤 + TCP 预检）
-├── prod_guard.rs   # 生产保护：限流/熔断/metrics
+├── prod_guard.rs    # 生产保护：限流/熔断/metrics
 ├── session.rs       # 会话绑定（下游线程 ↔ 模型）
 ├── errors.rs        # OpenAI/Anthropic 兼容错误
 ├── web.rs           # 内置控制面板（单 HTML）
 └── protocol/
-    ├── responses.rs    # /v1/responses 桥接
-├── openai_sse.rs      # 上游 SSE → OpenAI SSE
-    ├── anthropic_sse.rs   # 上游 SSE → Anthropic SSE
-    └── stream.rs          # reqwest bytes → tokio AsyncRead 适配
+    ├── openai_sse.rs       # 上游 SSE → OpenAI SSE
+    ├── openai_sse_helper.rs # 非流式 OpenAI 组装
+    ├── anthropic_sse.rs    # 上游 SSE → Anthropic SSE
+    ├── responses.rs        # /v1/responses 桥接
+    ├── stream.rs           # reqwest bytes → tokio AsyncRead 适配
+    └── mod.rs              # 协议模块声明
 tests/
 ├── models_test.rs   # 模型目录/归一化/解析/代理池
 └── proxy_test.rs    # 免费代理解析
@@ -64,4 +66,4 @@ tests/
 
 ## 测试
 
-`cargo test --lib --tests`：57 个测试（模型目录/归一化+能力字段、协议 SSE 转换、代理池冷却/轮换/脱敏、限流/熔断/metrics、用量统计、日志脱敏等）。
+`cargo test --lib --tests`：65 个测试（模型目录/归一化+能力字段与静态兜底回填、协议 SSE 转换、代理池冷却/轮换/脱敏、限流/熔断/metrics、用量统计、日志脱敏、安全归属/注入转义等）。

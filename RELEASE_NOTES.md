@@ -1,7 +1,17 @@
 # TryingOpen2API 发布说明
 
-> 当前版本：v0.1.16（协议对齐 + 错误可操作化）· 仓库 main 分支
+> 当前版本：v0.1.17（面板轮询合并 + 移动端 + 压测基线 + 安全加固）· 仓库 main 分支
 > 完整变更历史见 [CHANGELOG.md](CHANGELOG.md)；详细协议/部署见 docs/INDEX.md。
+
+## v0.1.17（2026-09-27）
+
+- feat: 面板状态轮询合并（refreshPanel + Promise.allSettled，消除双刷新闪烁）
+- feat: 移动端适配（粘性表头 / ≥44px 触摸目标 / colspan 修正）
+- fix: 动态目录替换保留静态 messageLimit/cheaperFallback 兜底（kimi 字段不再被清空）
+- security: H1 面板 key 注入 XSS + M1 限流归属嫁祸 + M2 日志脱敏连字符 key
+- bench: v0.1.16 压测基线刷新 + lto thin/fat 实测对比（保持 thin）
+- test: 65 全绿（60 → +5：兜底回填/空目录短路 + 注入转义 / 归属 / 脱敏正则）
+- 验收：本地真实 E2E（四端点 + kimi 透传 + 401 + usage + 日志脱敏 + 熔断 502→503）；真实上游 200 对话待上游配额次日刷新复验
 
 ## v0.1.16（2026-09-27）
 

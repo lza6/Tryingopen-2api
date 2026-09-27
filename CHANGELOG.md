@@ -1,3 +1,16 @@
+## 0.1.17 (2026-09-27) — 面板轮询合并 + 移动端 + 压测基线 + 安全加固
+
+- feat(web): 面板状态轮询合并为一次并行刷新（refreshPanel + Promise.allSettled，消除 15s 双刷新闪烁）；任一接口失败独立 toast 不整体报错（U5）
+- feat(web): 移动端适配——模型表粘性表头、`@media(max-width:640px)` 下按钮触摸目标 ≥44px、错误态 colspan 6→7 修正（U3）
+- fix(web): config.example.json 重复键 redact_logs 去重；README 排版残迹 `\n>\n >` 修复
+- fix(models): 动态目录整体替换时保留静态 messageLimit/cheaperFallbackId 兜底元数据（kimi messageLimit=5 / cheaper 不被上游空字段清空；上游显式值仍覆盖），新增 1 测试
+- bench: v0.1.16 全链路压测基线刷新（并发 20×200 三端点 200/200，p50 10-12ms）+ lto thin vs fat 实测对比（fat 体积 −7.2%、编译 +12min，保持 thin），产出 results-20260927.json + N3 报告追加
+- security: H1 面板 key 注入存储型 XSS 修复（动态 key 字符集白名单 `[A-Za-z0-9_-]` + 注入前 `<`/`>` 转义 `</>`）
+- security: M1 限流/用量 key 归属与鉴权一致（新增 authenticated_key：Bearer 与 x-api-key 同现时以 x-api-key 为准，防「Bearer 填受害者 key」嫁祸）
+- security: M2 日志脱敏正则支持 `sk-to-<uuid>` 连字符形态
+- test: 新增 5 测试（models 兜底回填/空目录短路 2 + 安全 3：注入转义 / authenticated_key 归属 / 脱敏正则）→ 60 → 65 全绿
+- 验收：本地真实 E2E（healthz/models 200 + kimi 字段透传复验 + 401 + usage 计数 + JSON 日志脱敏 + 面板 200 + 熔断 mock 5xx 全链路 502→503）；真实上游 200 对话因上游当日配额耗尽（每 24h 约 20 次）以可操作化 502 等价验证，次日 UTC 刷新后可复验
+
 ## 0.1.16 (2026-09-27) — 协议对齐 + 错误可操作化
 
 - feat: Anthropic thinking 参数支持（{type:enabled}→effort=deep + 系统提示；disabled/未知保持原 effort），resolve_effort 纯函数

@@ -129,3 +129,83 @@ JSON 基线已写入: scripts/bench/results/results-20260926.json
    `results-*.json` 可做趋势比对（p50/p95 环比）。
 6. **已知边界**：脚本使用 `ForEach-Object -Parallel`，要求 PowerShell 7+；
    Windows PowerShell 5.1 不可用，需用 `pwsh` 运行。
+
+---
+
+## 6. 2026-09-27 v0.1.16 刷新（全链路实跑 + 编译调优对比）
+
+> 状态：**已验证**（真实构建 + 真实服务 + 真实压测）。
+> 版本 `v0.1.16`，rustc 1.95.0，release profile `opt-level=3 / lto=thin / panic=abort / strip=true`。
+
+### 6.1 构建与产物
+
+```powershell
+cargo build --release --bin tryingopen2api   # 3m49s，exit 0
+```
+
+- release 产物：`target/release/tryingopen2api.exe` = **6,123,520 字节**（约 5.84 MiB）。
+
+### 6.2 测试配置与服务启动
+
+临时配置 `target/bench/bench-config.json`（gitignored，不入库）：
+
+- `listen_addr = 127.0.0.1:47831`；`api_keys = []`（匿名放行，仅本机）；
+- `free_proxy_enabled = false`（避免联网抓代理）、`skip_upstream_check = true`、
+  `direct_fallback` 保持默认、`rate_limit`/`circuit_breaker` 开（默认值）。
+
+启动方式：`Start-Process tryingopen2api.exe --config target\bench\bench-config.json -PassThru`
+（PID=23244，日志 `target/bench/bench-server.log`）；`/healthz` **第 1 次轮询即 200** 就绪。
+日志确认：`未配置 api_keys：仅本机可访问`、`HTTP 服务已启动`，启动无上游代理抓取。
+
+### 6.3 压测执行
+
+脚本要求 PowerShell 7+，故用 `pwsh` 运行（`powershell` = 5.1 会因
+`#requires -Version 7.0` 拒绝执行，属环境差异非脚本缺陷）：
+
+```powershell
+C:\Program Files\PowerShell\7\pwsh.exe -File scripts/bench/bench.ps1 -BaseUrl http://127.0.0.1:47831 -Concurrency 20 -Requests 200
+```
+
+结果（每端点 200 请求，全部 200，0 FAIL，退出码 0）：
+
+| 端点 | 成功/总 | P50 ms | P95 ms | Max ms | 吞吐 req/s |
+|---|---|---|---|---|---|
+| `/healthz` | 200/200 | 10.3 | 746.7 | 1681.1 | 118.97 |
+| `/v1/models` | 200/200 | 11.4 | 83.6 | 196.2 | 1019.34 |
+| `/api/proxies` | 200/200 | 10.6 | 129.7 | 334.7 | 597.47 |
+
+基线文件：`scripts/bench/results/results-20260927.json`（可被 `ConvertFrom-Json` 正常解析）。
+
+要点解读：
+
+- **服务侧延迟健康**：三端点 p50 均在 10-12ms 区间，`/v1/models` 达 1019 req/s。
+  相比 09-26 运行（healthz avg 48ms）服务延迟进一步确认处于亚 100ms 量级。
+- **healthz p95=746.7ms / max=1681.1ms 为工具预热伪影**：`ForEach-Object -Parallel`
+  首批 runspace 冷启动与各批次调度波动所致（09-26 同等异常 p95=908.7ms），
+  非服务回归——`/v1/models`、`/api/proxies` 同批数据 p95 均 < 130ms 可佐证。
+- 未开启 `-StressChat`，**未调用 `/v1/chat/completions`，不消耗上游配额**。
+
+### 6.4 编译调优对比（lto=thin vs fat 实测）
+
+按任务在 **Cargo.toml 备份 → 临时改 lto="fat" → 构建 → 记录 → 还原 → 重建确认** 流程实测：
+
+| 项 | lto=thin（当前） | lto=fat（临时） |
+|---|---|---|
+| 构建耗时 | 3m49s（初建）/ 3m30s（还原复现） | 15m46s |
+| exe 体积 | 6,123,520 B | 5,681,664 B |
+| 体积差 | — | 小 441,856 B（约 7.2%） |
+
+结论：
+
+- fat LTO 体积收益约 **7.2%**，代价是构建时间 +12min（薄依赖树、单机多核并行下的
+  fat 链接是主要耗时），且本仓没有体积或启动时延硬指标约束。
+- 还原后 `cargo build --release` 再产出 `6,123,520 B`，与 thin 基线**完全一致**，
+  Cargo.toml 无残留 diff（`lto = "thin"` 已恢复）。
+- **建议保持 thin 不变**：7.2% 体积换 4 倍编译时长不划算；若未来有容器镜像瘦身需求，
+  优先考虑 `strip`/`opt-level` 已启用项与依赖裁剪，而非全仓 fat LTO。
+
+### 6.5 清理确认
+
+- 压测结束已 `Stop-Process -Id 23244`，`Get-Process` 复查进程已退出（无残留监听 47831）。
+- 本次新增入库物仅 `scripts/bench/results/results-20260927.json`；临时配置/日志在
+  gitignored 的 `target/bench/` 下，不入库。
