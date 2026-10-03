@@ -51,6 +51,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/models", get(handle_v1_models))
         .route("/v1/chat/completions", post(handle_chat_completions))
         .route("/v1/messages", post(handle_claude_messages))
+        .route("/v1/messages/count_tokens", post(handle_count_tokens))
         .route("/v1/responses", post(handle_responses))
         .route("/api/proxies", get(handle_proxies))
         .route("/api/proxies/refresh-free", post(handle_refresh_free))
@@ -1475,6 +1476,27 @@ fn anthropic_text(content: &serde_json::Value) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// 估算 token（无真实 tokenizer，按 ≈4 字符 1 token）
+fn estimate_tokens(text: &str) -> u64 {
+    ((text.chars().count() as u64) / 4).max(1)
+}
+
+/// Claude Code 会调用 /v1/messages/count_tokens 预统计。返回估算值。
+async fn handle_count_tokens(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AnthropicRequest>,
+) -> Response {
+    if let Err(e) = check_api_key(&state.cfg, &state.api_keys, &headers) {
+        return api_err_response_anthropic(e);
+    }
+    let mut text = body.system.as_ref().map(anthropic_text).unwrap_or_default();
+    for m in &body.messages {
+        text.push_str(&anthropic_text(&m.content));
+    }
+    axum::Json(json!({ "input_tokens": estimate_tokens(&text) })).into_response()
 }
 
 fn anthropic_image_parts(messages: &[AnthropicMessage]) -> Vec<MessagePart> {
