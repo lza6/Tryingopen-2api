@@ -8,7 +8,7 @@ TryingOpen2API 把 [tryingopen.com](https://www.tryingopen.com) 免费层的开�
 
 > 本项目是把 `imagefree-2ai` 里的 tryingopen 提供商 + 代理池单独抽出，按 `tokenharbor-2api` 的架构重写的独立网关。抓包与站点 JS 已随附在 `源代码、网络数据包/`。
 >
-> **v0.1.17（面板轮询合并 + 移动端 + 压测基线 + 安全加固）**：面板状态轮询合并（消除双刷新闪烁）、移动端粘性表头/≥44px 触摸目标、动态目录保留静态 messageLimit/cheaperFallback 兜底、面板 key 注入 XSS 修复、限流归属防嫁祸、日志脱敏覆盖连字符 key、压测基线刷新 + lto thin/fat 对比。此前已含：模型能力字段透传（思考/消息数上限/降级建议）、429 按上游建议模型自动降级、每 key 用量统计（/api/usage）、请求日志结构化 JSON、config.local.json 局部覆盖、代理池 44 源（免费源抓取，单轮预检注入上限 4500）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
+> **v0.1.17（面板轮询合并 + 移动端 + 压测基线 + 安全加固）**：面板状态轮询合并（消除双刷新闪烁）、移动端粘性表头/≥44px 触摸目标、动态目录保留静态 messageLimit/cheaperFallback 兜底、面板 key 注入 XSS 修复、限流归属防嫁祸、日志脱敏覆盖连字符 key、压测基线刷新 + lto thin/fat 对比。此前已含：模型能力字段透传（思考/消息数上限/降级建议）、429 按上游建议模型自动降级、每 key 用量统计（/api/usage）、请求日志结构化 JSON、config.local.json 局部覆盖、代理池 43 源（免费源抓取，单轮预检注入上限 4500）、低延迟优先 + 并发门控、工具调用转换、思考解析、effort 透传、多模态、模型下线自动降级、UI 容量实时显示。
 
 ---
 
@@ -34,7 +34,7 @@ cargo build --release
 ```jsonc
 {
   "proxy_file": "data/proxies.txt",        // 住宅/自备代理，每行 http://user:pass@host:port
-  "free_proxy_enabled": true,              // 开启免费代理抓取（默认 true，44 源）
+  "free_proxy_enabled": true,              // 开启免费代理抓取（默认 true，43 源）
   "hourly_per_ip": 20,                     // tryingopen 单 IP 每日限流
   "max_attempts": 3,                       // 每请求最多换几个出口
   "direct_fallback": true                  // 全部代理失败后直连兜底
@@ -117,7 +117,7 @@ API Key:  sk-local（或面板生成）
 
 ## 四、代理池（核心能力）
 
-- **双源**：住宅代理文件（`data/proxies.txt`，每行一个 `http://user:pass@host:port`，优先）+ 免费代理（44 个公开源后台抓取，量大兜底）
+- **双源**：住宅代理文件（`data/proxies.txt`，每行一个 `http://user:pass@host:port`，优先）+ 免费代理（43 个公开源后台抓取，量大兜底）
 - **每 IP 限流语义**：按 `hourly_per_ip`（默认 20）控制每个出口的使用次数；24h 窗口重置
 - **故障轮换**：429 / 网络错误 → `mark_failure` 冷却该出口 + 健康分 EWMA 下调 + 指数退避（2s/4s/8s）→ 下一轮换新出口
 - **优先策略**：24h 内未用过的 IP 优先；全部用过一轮后按健康分 + 冷却最早结束排序
@@ -168,7 +168,7 @@ TryingOpen 站点（Next.js + Turbopack，完全匿名）：
 | `request_timeout_sec` | `120` | 请求超时 |
 | `catalog_refresh_min` | `30` | 目录刷新周期 |
 | `proxy_file` | `data/proxies.txt` | 住宅代理文件 |
-| `free_proxy_enabled` | `true` | 免费代理抓取开关（默认开，44 源） |
+| `free_proxy_enabled` | `true` | 免费代理抓取开关（默认开，43 源） |
 | `free_proxy_refresh_min` | `30` | 免费代理刷新周期 |
 | `hourly_per_ip` | `20` | 每 IP 每日限流 |
 | `max_attempts` | `3` | 最大出口尝试轮数 |
@@ -204,7 +204,7 @@ src/
 ├── models.rs        # 模型目录（12 静态 + 动态同步）+ 归一化/降级
 ├── upstream.rs      # TryingOpen HTTP 客户端（对话/目录抓取）
 ├── proxy_pool.rs    # 代理池（住宅+免费双源，冷却/轮换/健康分）
-├── free_proxy.rs    # 免费代理抓取器（44 源 + 公网 IP 过滤 + TCP 延迟预检）
+├── free_proxy.rs    # 免费代理抓取器（43 源 + 公网 IP 过滤 + TCP 延迟预检）
 ├── session.rs       # 会话绑定（线程 ↔ 模型）
 ├── errors.rs        # OpenAI/Anthropic 兼容错误
 ├── prod_guard.rs    # 生产保护：限流/熔断/metrics/用量统计

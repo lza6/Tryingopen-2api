@@ -9,8 +9,9 @@
 #
 # ── Job matrix 设计 ─────────────────────────────────────────────────────
 #   OS     = [ubuntu-latest, windows-latest]
-#   toolchain = [stable]（MSRV 可选 1.85；如需最低版本保障，另加 [1.85.0] 并
-#              以 rust-version = "1.85" 声明在 Cargo.toml，当前仓库未声明）
+#   toolchain = [stable]（MSRV = 1.87，见 Cargo.toml rust-version；如需最低版本保障，
+#              另加 [1.87.0] 并以此声明 rust-version，勿低于 1.87：
+#              src/prod_guard.rs 的 u32::is_multiple_of 需 1.87 才稳定）
 #   fmt/clippy 只跑 ubuntu 一次（Windows 结果一致，省 runner 时间）
 #   test 跑矩阵（ubuntu + windows，main/PR 都跑）
 #   release 由 .github/workflows/release.yml 独占（tag v* 触发，windows 构建 + Release 创建），本文件不重复构建

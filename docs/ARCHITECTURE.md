@@ -11,7 +11,7 @@ src/
 ├── models.rs        # 模型目录（12 静态 + 动态同步（实测 24 模型））+ 归一化/降级
 ├── upstream.rs      # TryingOpen HTTP 客户端（/api/open 对话 + 目录抓取）
 ├── proxy_pool.rs    # 代理池（住宅+免费双源，冷却/轮换/健康分/粘滞）
-├── free_proxy.rs    # 免费代理抓取器（44 源 + 公网 IP 过滤 + TCP 预检）
+├── free_proxy.rs    # 免费代理抓取器（43 源 + 公网 IP 过滤 + TCP 预检）
 ├── prod_guard.rs    # 生产保护：限流/熔断/metrics
 ├── session.rs       # 会话绑定（下游线程 ↔ 模型）
 ├── errors.rs        # OpenAI/Anthropic 兼容错误
@@ -55,7 +55,7 @@ tests/
 
 ## 免费代理抓取
 
-- 44 个公开源（proxyscrape / geonode / proxifly / thespeedx 等；单轮预检注入上限 4500，池随活性清退）
+- 43 个公开源（proxyscrape / geonode / proxifly / thespeedx 等；单轮预检注入上限 4500，池随活性清退）
 - 公网 IP 白名单过滤（拒绝内网/回环/保留/组播）
 - TCP 连通性预检（3s 超时）
 - 注入超 3h 且 30min 未用自动剔除

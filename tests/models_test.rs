@@ -1,5 +1,7 @@
 //! 模型注册表 + 代理池 单元测试
 
+use std::sync::Arc;
+
 use tryingopen2api::models::{catalog, parse_ctx, ModelRegistry};
 use tryingopen2api::proxy_pool::{parse_cooldown_map, safe_host_port, ProxyPool};
 
@@ -296,4 +298,96 @@ fn upstream_chunk_parses_capability_fields() {
     assert_eq!(m.message_limit, Some(5));
     assert_eq!(m.cheaper_fallback.as_deref(), Some("minimax/minimax-m3"));
     assert!(m.reasoning);
+}
+
+#[tokio::test]
+async fn replace_from_parsed_refresh_restores_offline_model() {
+    // H2 自动恢复：目录刷新成功（非空 records）= 上游最新状态，
+    // 「重新出现在新目录且刷新成功」的模型应自动 unmark 下线，恢复可查。
+    let r = ModelRegistry::new();
+    let id = "moonshotai/kimi-k3";
+
+    // 模拟上游 model-not-found：标记下线 → /v1/models 隐藏、meta 不可查
+    r.mark_offline(id).await;
+    assert!(
+        r.offline_ids().await.iter().any(|x| x == id),
+        "mark_offline 后应处于离线集合"
+    );
+    assert!(r.meta(id).await.is_none(), "离线模型 meta 应不可查");
+
+    // 目录刷新成功：非空 records 且含该模型
+    let records = vec![
+        crate_meta(id, 1024 * 1024, None, None),
+        crate_meta("qwen/qwen3.8-27b", 262 * 1024, None, None),
+    ];
+    r.replace_from_parsed(records).await;
+
+    // 自动恢复：离线标记清除、meta 可查到（is_offline false 的可见结果）
+    assert!(
+        !r.offline_ids().await.iter().any(|x| x == id),
+        "刷新成功后仍在目录的模型应自动解除下线"
+    );
+    let m = r.meta(id).await;
+    assert!(m.is_some(), "自动恢复后 meta 应可查询");
+}
+
+#[tokio::test]
+async fn replace_from_parsed_keeps_offline_for_removed_models() {
+    // H2 保留语义：目录刷新成功后，仅清除「仍在新目录」的离线标记；
+    // 「仍不在新目录」的 id 必须保留 offline（真·被上游移除）。
+    let r = ModelRegistry::new();
+    let removed = "google/gemma-4-31b-it";
+    let kept = "moonshotai/kimi-k3";
+
+    r.mark_offline(removed).await;
+    r.mark_offline(kept).await;
+
+    // 刷新：records 只含 kept，不含 removed
+    let records = vec![
+        crate_meta(kept, 1024 * 1024, None, None),
+        crate_meta("qwen/qwen3.8-27b", 262 * 1024, None, None),
+    ];
+    r.replace_from_parsed(records).await;
+
+    assert!(
+        r.offline_ids().await.iter().any(|x| x == removed),
+        "仍不在新目录的模型应保留 offline 标记"
+    );
+    assert!(
+        !r.offline_ids().await.iter().any(|x| x == kept),
+        "出现在新目录的模型应解除 offline 标记"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn replace_from_parsed_no_abba_deadlock() {
+    // H1 锁序契约：全仓统一 forced_offline → inner，任何时刻最多持一个锁。
+    // 若 replace_from_parsed 嵌套持锁（inner → forced_offline），与 all()/normalize()
+    // （forced_offline → inner）形成 AB-BA 等待环 → tokio 多线程调度下死锁挂起，
+    // 本压测在 15s 内无法收敛即 panic。
+    let r = Arc::new(ModelRegistry::new());
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let r = r.clone();
+        handles.push(tokio::spawn(async move {
+            for round in 0..200 {
+                if (i + round) % 2 == 0 {
+                    // 目录刷新路径：写 inner → 写 forced_offline（修复前嵌套）
+                    let records = vec![crate_meta("qwen/qwen3.8-27b", 262 * 1024, None, None)];
+                    let _ = r.replace_from_parsed(records).await;
+                } else {
+                    // 请求路径：读 forced_offline → 读 inner
+                    let _ = r.all().await;
+                    let _ = r.normalize("deepseek-v4-flash-0731").await;
+                }
+            }
+        }));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        for h in handles {
+            h.await.unwrap();
+        }
+    })
+    .await
+    .expect("AB-BA 死锁：all/normalize 与 replace_from_parsed 交替应在 15s 内完成");
 }

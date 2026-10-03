@@ -12,3 +12,6 @@ graft/.cache/
 # 本地 config（禁止提交真实凭据；config.json 是运行期文件，用 config.example.json + config.local.json 管理）
 config.json
 config.local.json
+
+# 终局审计期间分离构建目录（代理用 CARGO_TARGET_DIR 隔离，避免与 target/ 互锁）
+target-verify-build/

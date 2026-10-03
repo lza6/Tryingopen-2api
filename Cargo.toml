@@ -5,6 +5,9 @@ edition = "2021"
 description = "TryingOpen 免费模型 OpenAI/Anthropic 兼容 API 网关（Rust 版，代理池故障轮换）"
 authors = ["lza6"]
 license = "MIT"
+# 最低 Rust 版本：1.87（src/prod_guard.rs 使用 u32::is_multiple_of，该 API 在 1.87 稳定；
+# Dockerfile builder 镜像 rust:1.87-bookworm 与之对齐，勿回降到 1.85 以下）
+rust-version = "1.87"
 
 [[bin]]
 name = "tryingopen2api"

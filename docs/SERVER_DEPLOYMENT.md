@@ -16,7 +16,7 @@
 | 配置 | /opt/tryingopen2api/config.json |
 | 数据 | /opt/tryingopen2api/data/ |
 | 上游 | https://www.tryingopen.com（匿名） |
-| 代理池 | 免费 44 源 + 住宅文件 data/proxies.txt，默认开启 |
+| 代理池 | 免费 43 源 + 住宅文件 data/proxies.txt，默认开启 |
 | 生产保护 | per-key 限流 60/3600s、上游熔断 5 次/30s、/metrics Prometheus |
 
 

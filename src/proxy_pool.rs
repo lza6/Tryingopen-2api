@@ -37,6 +37,9 @@ pub struct ProxySnapshot {
     pub host_port: String,
     pub source: String,
     pub daily_uses: u32,
+    /// 该出口今日剩余配额（hourly_per_ip − 当日已用，下限 0）；
+    /// 行级字段，供面板「容量剩余」列（与顶层 capacity.capacity_remaining 口径一致）
+    pub capacity_remaining: u64,
     pub cooling: bool,
     pub cooldown_seconds: i64,
     pub fails: u32,
@@ -94,7 +97,7 @@ impl ProxyEntry {
         true
     }
 
-    fn snapshot(&self) -> ProxySnapshot {
+    fn snapshot(&self, hourly_per_ip: usize) -> ProxySnapshot {
         let t = now();
         let host_port = safe_host_port(&self.url);
         let c = if t < self.cooldown_until {
@@ -102,14 +105,17 @@ impl ProxyEntry {
         } else {
             0.0
         };
+        let daily_uses = if (t / DAY as f64) as i64 == self.day_key {
+            self.daily_uses
+        } else {
+            0
+        };
         ProxySnapshot {
             host_port,
             source: self.source.clone(),
-            daily_uses: if (t / DAY as f64) as i64 == self.day_key {
-                self.daily_uses
-            } else {
-                0
-            },
+            daily_uses,
+            // 行级剩余配额：hourly_per_ip − 当日已用，下限 0（与顶层 capacity 计算口径一致）
+            capacity_remaining: (hourly_per_ip as u64).saturating_sub(daily_uses as u64),
             cooling: t < self.cooldown_until,
             cooldown_seconds: c as i64,
             fails: self.consecutive_fails,
@@ -598,7 +604,11 @@ impl ProxyPool {
     pub async fn snapshot(&self, hourly_per_ip: usize) -> serde_json::Value {
         let data = self.inner.read().await;
         let t = now();
-        let mut items: Vec<ProxySnapshot> = data.entries.iter().map(|e| e.snapshot()).collect();
+        let mut items: Vec<ProxySnapshot> = data
+            .entries
+            .iter()
+            .map(|e| e.snapshot(hourly_per_ip))
+            .collect();
         items.sort_by(|a, b| {
             b.health_score
                 .partial_cmp(&a.health_score)

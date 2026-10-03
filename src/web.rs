@@ -35,7 +35,10 @@ table { width:100%; border-collapse:collapse; font-size:13px; }
 td.num { text-align:right; }
 th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); }
 th { color:var(--muted); font-weight:500; }
-#model-table thead th { position:sticky; top:0; background:var(--table-head-bg, var(--card)); z-index:1; }
+/* sticky 表头：top = 页面 header 高度（padding 14px×2 + 内容行高 ≈ 50-56px），
+   滚动时贴 header 下沿滑动，不再滑到 header 底下被完全遮住；
+   z-index(1) 低于页面 header(z-index:10)，表头不会遮挡顶栏 */
+#model-table thead th, #proxy-table thead th { position:sticky; top:56px; background:var(--table-head-bg, var(--card)); z-index:1; }
 .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; }
 .badge.ok { background:#0c3b2e; color:var(--ok); } .badge.warn { background:#3d2f0a; color:var(--warn); }
 .badge.err { background:#3b0f0f; color:var(--err); } .badge.dim { background:#1c2530; color:var(--muted); }
@@ -60,9 +63,10 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
 #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--accent); padding:10px 20px; border-radius:10px; display:none; z-index:100; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.5); }
 .tblwrap { overflow-x:auto; }
 .guide-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-family:ui-monospace,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; }
-/* 移动端触摸目标：≥44px（Apple/Google 可访问性下限），桌面断点外保持原外观 */
+/* 移动端触摸目标：≥44px（Apple/Google 可访问性下限），桌面断点外保持原外观；
+   L2 修复：补齐 nav 标签按钮与 primary/danger 等未带 .sm/.ghost 的按钮 */
 @media (max-width:640px) {
-  button.sm, button.ghost { min-height:44px; }
+  button.sm, button.ghost, nav button, button:not(.sm):not(.ghost) { min-height:44px; }
 }
 </style>
 </head>
@@ -119,7 +123,7 @@ label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
       <div class="empty" id="proxy-empty">暂无代理数据</div>
       <div class="tblwrap"><table id="proxy-table" style="display:none">
         <thead><tr><th>出口</th><th>来源</th><th>延迟</th><th>今日次数</th><th>容量剩余</th><th>健康分</th><th>冷却</th><th>连续失败</th></tr></thead>
-        <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+        <tbody><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
       </table></div>
     </div>
   </section>
@@ -324,7 +328,7 @@ async function loadGuide() {
     const g = await j('/api/guide');
     const base = g.base_url || (location.protocol + '//' + location.host + '/v1');
     const anthBase = base.replace(/\/v1$/, '');
-    const key = (Array.isArray(API_KEYS) && API_KEYS.length > 0) ? API_KEYS[0] : (g.api_keys_configured ? '<需要有效 key>' : '面板已自动注入（空配置时生成会话级 key）');
+    const key = (Array.isArray(API_KEYS) && API_KEYS.length > 0) ? API_KEYS[0] : (g.api_keys_configured ? '<需要有效 key>' : '当前无需 key（空配置放行；打开面板后将自动注入会话级 key）');
     const models = (g.models && g.models.length) ? g.models.join('、') : '（目录为空，点击同步）';
     live.innerHTML = `监听: ${esc(g.listen_addr || '-')}\nBase URL: ${esc(base)}\n模型数: ${esc(g.models ? g.models.length : '-')}（${esc(models)}）\n代理池: ${esc(g.proxy_count ?? '-')}\n累计请求: ${esc(g.usage_total_requests ?? '-')}\n上游: ${esc(g.upstream || '-')}\n密钥已配置: ${esc(g.api_keys_configured ? '是' : '否（建议先配置）')}`;
     oa.innerHTML = `Base URL: ${esc(base)}\nAPI Key: ${esc(key)}\n模型: ${esc(models)}`;

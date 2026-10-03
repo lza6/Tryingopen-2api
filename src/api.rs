@@ -47,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
         .route("/", get(handle_dashboard))
         .route("/ui", get(handle_dashboard))
+        .route("/favicon.ico", get(handle_favicon))
         .route("/healthz", get(handle_healthz))
         .route("/v1/models", get(handle_v1_models))
         .route("/v1/chat/completions", post(handle_chat_completions))
@@ -140,12 +141,35 @@ async fn handle_dashboard(State(state): State<AppState>, headers: HeaderMap) -> 
         }
     }
     // 默认配置（api_keys 为空）下面板首次打开会给所有数据端点 401：
-    // 这里生成一次性会话级 key 注入前端，配合 check_api_key 的放行语义（空=本机模式）一起自愈
+    // 这里生成一次性会话级 key 注入前端，配合 check_api_key 的放行语义（空=本机模式）一起自愈。
+    // H4 修复：去重 + 有界 —— 写锁内重查，已有 sk-to-session- 前缀 key 则复用注入（不重复写），
+    // 否则才生成；生成后仅保留最近 8 个会话级 key，防每次打开面板无界累积 →
+    // 内存无界增长 + 累积 ≥64 后「生成 Key」按钮误报已达上限
     if keys.is_empty() && state.cfg.api_keys.is_empty() {
-        let session_key = format!("sk-to-session-{}", uuid::Uuid::new_v4().simple());
         if let Ok(mut w) = state.api_keys.write() {
-            w.push(session_key.clone());
-            keys.push(session_key);
+            let reuse = w.iter().find(|k| k.starts_with("sk-to-session-")).cloned();
+            match reuse {
+                // 并发/历史已存在会话级 key：复用，不重复 push
+                Some(existing) => keys.push(existing),
+                None => {
+                    let session_key = format!("sk-to-session-{}", uuid::Uuid::new_v4().simple());
+                    w.push(session_key.clone());
+                    const MAX_SESSION_KEYS: usize = 8;
+                    let sk_count = w.iter().filter(|k| k.starts_with("sk-to-session-")).count();
+                    if sk_count > MAX_SESSION_KEYS {
+                        let mut seen = 0usize;
+                        w.retain(|k| {
+                            if k.starts_with("sk-to-session-") {
+                                seen += 1;
+                                seen > sk_count - MAX_SESSION_KEYS
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                    keys.push(session_key);
+                }
+            }
         }
     }
     // 注入数量上限：只暴露前 N 个（防 key 过多时整页 HTML 膨胀/泄漏面）
@@ -156,6 +180,16 @@ async fn handle_dashboard(State(state): State<AppState>, headers: HeaderMap) -> 
     );
     let html = crate::web::INDEX_HTML.replace("__API_KEYS_JSON__", &keys_json);
     Html(html).into_response()
+}
+
+/// /favicon.ico：内联 SVG 图标（浏览器默认请求，无此路由会在控制台报 404）
+async fn handle_favicon() -> Response {
+    const ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1a6df0"/><path d="M9 22V10l7 8 7-8v12" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+    Response::builder()
+        .header("content-type", "image/svg+xml")
+        .header("cache-control", "public, max-age=86400")
+        .body(axum::body::Body::from(ICON))
+        .unwrap()
 }
 
 async fn handle_healthz(State(state): State<AppState>) -> Json<serde_json::Value> {

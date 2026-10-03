@@ -1,50 +1,24 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# TryingOpen2API Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. 真实闭环优先（NON-NEGOTIABLE）
+Every claimed feature must have executable code, runnable commands, and reproducible verification. "理论可行"、"有代码片段"、"有界面按钮" is not "已完成". Mock only proves isolation, not integration.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. 门禁铁律
+Every change must pass: `cargo fmt --all -- --check` → `cargo clippy --all-targets --all-features -- -D warnings` → `cargo test --tests --all-features`. All green required before commit. Test count must be recorded and synced across docs.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. 上游配额红线
+tryingopen.com 每 24h UTC 日约 20 次/IP 是硬约束。任何自动化压测/批量调用必须走代理池且控制总量，或使用 mock 上游。禁止默认压测猛打 `/v1/chat`。
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. 面板无构建链
+`src/web.rs` 内嵌 HTML/JS 无前端构建。任何 web.rs 改动必须真实浏览器（或 node JS 语法校验 + 结构断言）验证，不能只看字符串拼写。
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. 诚实披露
+结论使用四级标签：`已验证`（实际运行）/ `静态确认`（读代码）/ `合理推断`（间接证据）/ `待验证`（缺环境）。外部受限项（真实上游配额、付费 API、生产凭据、服务器运维）必须明确披露边界，不包装成已完成。
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### VI. 不重构、小步走
+只做小步、可回滚、可单测的行为级改进；大改架构先写 ADR 并经确认。不"顺手"重构没坏的东西。
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
-
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
-
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
-
-## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
-
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+### VII. 记忆台账防重复验证
+每次验证记录测试范围与已优化点（`优化迭代计划/验收记录-*.md`、`workflow_status.md`、`.claude/memory/`）。下次改到相关模块先读台账，不重复跑已验证过的全量验证。

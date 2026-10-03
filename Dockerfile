@@ -1,5 +1,8 @@
 # ---- builder 阶段：编译 Rust 二进制 ----
-FROM rust:1.85-bookworm AS builder
+# 镜像版本约束：需 >= 1.87（src/prod_guard.rs 使用 u32::is_multiple_of，该 API 在
+# Rust 1.87 稳定，1.85 无此方法会编译失败）；与 Cargo.toml rust-version = "1.87" 对齐。
+# 可升级到更高 stable（如 rust:1.88-bookworm / rust:1.89-bookworm），不要降回 1.85。
+FROM rust:1.87-bookworm AS builder
 WORKDIR /build
 
 # 无 C 编译依赖（纯 Rust 依赖）；reqwest 用 rustls-tls，不装系统 openssl

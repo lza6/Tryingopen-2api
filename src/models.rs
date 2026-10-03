@@ -360,16 +360,21 @@ impl ModelRegistry {
     /// （2026-09-26 实测上游 chunk 已不带这三字段），直接整体替换会把静态兜底
     /// （如 kimi messageLimit=5 / cheaper=minimax-m3）清空。这里对动态记录中
     /// 缺失的字段回填静态目录同 id 的既有值；上游显式提供的新值优先覆盖。
+    ///
+    /// 锁序契约（H1）：全仓统一 `forced_offline → inner`，任何时刻最多持一个锁，
+    /// 不与 `all()`/`normalize()`（forced_offline 读 → inner 读）形成 AB-BA 等待环。
+    /// 因此这里把 static_meta 快照、目录写入、offline 清理拆成三个互不嵌套的独立
+    /// 作用域：inner 写锁用毕即释放，再单独取 forced_offline 写锁。
     pub async fn replace_from_parsed(&self, records: Vec<ModelMeta>) -> usize {
         if records.is_empty() {
             return self.inner.read().await.len();
         }
-        // 静态兜底快照（id → 元数据），用于回填缺失字段
+        // 静态兜底快照（id → 元数据），用于回填缺失字段；读后即释放
         let static_meta: std::collections::HashMap<String, ModelMeta> = {
             let list = self.inner.read().await;
             list.iter().map(|m| (m.id.clone(), m.clone())).collect()
         };
-        let mut list = self.inner.write().await;
+        // 纯内存合并（无锁）：上游缺失 message_limit/cheaper_fallback 时回填静态兜底
         let mut merged: Vec<ModelMeta> = Vec::with_capacity(records.len());
         for mut m in records {
             if m.message_limit.is_none() {
@@ -384,13 +389,23 @@ impl ModelRegistry {
             }
             merged.push(m);
         }
-        *list = merged;
-        // 剪除 offline 标记中已不在新目录的 id（目录更新 = 上游最新状态）
+        // 新目录 id 集合（offline 语义重建用；无锁纯计算）
+        let present: HashSet<String> = merged.iter().map(|m| m.id.clone()).collect();
+        let n = merged.len();
+        // 写目录：仅持 inner 写锁，作用域结束即释放
+        {
+            let mut list = self.inner.write().await;
+            *list = merged;
+        }
+        // 以新目录为准重建 offline 语义（H2）：收到非空 records = 上游目录刷新成功，
+        // 「重新出现在新目录」的 id 自动解除下线（mark_offline 期间的下线恢复），
+        // 仅保留「仍不在新目录」的 offline 标记（真·被上游移除）。
+        // 单独取 forced_offline 写锁，与 inner 不嵌套、不重入。
         {
             let mut offline = self.forced_offline.write().await;
-            offline.retain(|id| list.iter().any(|m| &m.id == id));
+            offline.retain(|id| !present.contains(id));
         }
-        list.len()
+        n
     }
 }
 

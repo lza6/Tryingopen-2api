@@ -139,5 +139,5 @@
 - 多轮工具：请把上一次的 `function_call` 和 `function_call_output` 放回 `input`。Chat 接口同理要回传 `assistant.tool_calls` 和 `role=tool`。
 
 ### 对话过长
-- 网关会截断最旧历史（约 12000 字）再发给上游。
+- 网关会截断最旧历史（约 16000 字符）再发给上游。
 - 上游仍返回 HTTP 413 / `too much text` 时，立刻 400，不再轮换代理。

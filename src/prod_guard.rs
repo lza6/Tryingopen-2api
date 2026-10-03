@@ -111,6 +111,9 @@ struct CbInner {
     state: CbState,
     consecutive_failures: u32,
     opened_at: Option<Instant>,
+    /// HalfOpen 进入时刻：探测请求若不返回明确 2xx/5xx（如 4xx/429），
+    /// 超时后自动回 Open 重新计时，避免探测请求永久卡在 HalfOpen → 全量 503
+    half_open_at: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -131,6 +134,7 @@ impl CircuitBreaker {
                 state: CbState::Closed,
                 consecutive_failures: 0,
                 opened_at: None,
+                half_open_at: None,
             }),
         }
     }
@@ -152,12 +156,26 @@ impl CircuitBreaker {
                     if now.saturating_duration_since(opened) >= self.timeout {
                         // 进入半开，放行一个探测请求
                         inner.state = CbState::HalfOpen;
+                        inner.half_open_at = Some(now);
                         return true;
                     }
                 }
                 false
             }
-            CbState::HalfOpen => false, // 探测请求在途，其它拒绝
+            CbState::HalfOpen => {
+                // 探测请求在途，其它拒绝；但若探测请求超时未返回明确结果
+                // （既不 record_success 也不 record_failure，如 4xx/429），
+                // 回到 Open 重新计时，等待下一个窗口再探测 —— 防止永久卡死
+                if let Some(probed) = inner.half_open_at {
+                    if now.saturating_duration_since(probed) >= self.timeout {
+                        inner.state = CbState::Open;
+                        inner.opened_at = Some(now);
+                        inner.half_open_at = None;
+                        return false;
+                    }
+                }
+                false
+            }
         }
     }
 
@@ -174,6 +192,7 @@ impl CircuitBreaker {
                 inner.state = CbState::Closed;
                 inner.consecutive_failures = 0;
                 inner.opened_at = None;
+                inner.half_open_at = None;
             }
             CbState::Open => {}
         }
@@ -196,6 +215,7 @@ impl CircuitBreaker {
                 // 探测失败 → 重新 OPEN
                 inner.state = CbState::Open;
                 inner.opened_at = Some(Instant::now());
+                inner.half_open_at = None;
             }
             CbState::Open => {}
         }
@@ -486,6 +506,57 @@ mod tests {
         cb.record_failure();
         assert!(cb.allow());
         assert_eq!(cb.state(), CbState::Closed);
+    }
+
+    #[test]
+    fn circuit_breaker_halfopen_stuck_probe_times_out_back_to_open() {
+        // C1 回归：探测请求若既不 record_success 也不 record_failure
+        // （如 4xx/429），不得永久卡在 HALF_OPEN 导致全量 503 ——
+        // 超时后自动回 OPEN，等待下一个窗口再探测
+        let cb = CircuitBreaker::new(true, 2, 30);
+        // Closed → 2 次失败 → Open
+        cb.record_failure();
+        cb.record_failure();
+        assert_eq!(cb.state(), CbState::Open);
+        // Open 超时 → HalfOpen 放行一个探测（探测请求在途）
+        let t1 = Instant::now() + Duration::from_secs(31);
+        assert!(cb.allow_at(t1), "HalfOpen 探测放行");
+        assert_eq!(cb.state(), CbState::HalfOpen);
+        // 探测在途期间其它请求拒绝
+        assert!(!cb.allow_at(t1 + Duration::from_secs(1)));
+        // 探测请求返回「不明确结果」→ 既不 success 也不 failure
+        // （等价于上游 429/模型不存在，api.rs 只对 is_server_error 记 failure）
+        // —— 这是 C1 的卡死场景
+        // 未超时仍卡在 HalfOpen
+        assert!(!cb.allow_at(t1 + Duration::from_secs(5)));
+        assert_eq!(cb.state(), CbState::HalfOpen);
+        // 探测超时（>= timeout 未反馈明确结果）→ 自动回 Open 重新计时
+        let t2 = t1 + Duration::from_secs(31);
+        assert!(!cb.allow_at(t2), "回 Open 后拒绝（等下一个窗口再探测）");
+        assert_eq!(
+            cb.state(),
+            CbState::Open,
+            "从 HalfOpen 超时自动回 Open，不再卡死"
+        );
+        // Open 再次超时 → 又能放行下一个探测（可自愈）
+        let t3 = t2 + Duration::from_secs(31);
+        assert!(cb.allow_at(t3), "下一窗口探测重新放行");
+    }
+
+    #[test]
+    fn circuit_breaker_halfopen_probe_success_clears_timer() {
+        // 探测成功路径：HalfOpen → Closed，half_open_at 清理
+        let cb = CircuitBreaker::new(true, 2, 30);
+        cb.record_failure();
+        cb.record_failure();
+        let t1 = Instant::now() + Duration::from_secs(31);
+        assert!(cb.allow_at(t1));
+        assert_eq!(cb.state(), CbState::HalfOpen);
+        cb.record_success();
+        assert_eq!(cb.state(), CbState::Closed);
+        assert!(cb.allow());
+        // Closed 下 repeated allow 正常（不卡死）
+        assert!(cb.allow());
     }
 
     #[test]
